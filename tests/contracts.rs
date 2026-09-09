@@ -295,6 +295,37 @@ fn inspect_does_not_create_missing_cache() {
 }
 
 #[test]
+fn cache_root_inside_node_modules_is_refused_before_anything_is_created() {
+    let (_temp, root) = scratch();
+    let nested = root.join("node_modules").join("cache");
+    let err = Cache::open(&nested).err().unwrap().to_string();
+    assert!(err.contains("cache_is_node_modules"), "{err}");
+    assert!(
+        !root.join("node_modules").exists(),
+        "open created an install tree"
+    );
+}
+
+#[test]
+fn inspect_requires_the_ownership_marker() {
+    let (_temp, root) = scratch();
+    let unowned = root.join("unowned");
+    fs::create_dir(&unowned).unwrap();
+    fs::write(unowned.join(".lock"), b"").unwrap();
+    let err = inspect(&unowned, &"a".repeat(64))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(err.contains("cache_not_initialized"), "{err}");
+    fs::write(unowned.join(".nmpool-cache"), b"something else\n").unwrap();
+    let err = inspect(&unowned, &"a".repeat(64))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(err.contains("cache_marker_invalid"), "{err}");
+}
+
+#[test]
 fn existing_unowned_cache_directory_is_untouched() {
     let (_temp, root) = scratch();
     fs::write(root.join("sentinel"), b"unrelated").unwrap();

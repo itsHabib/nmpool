@@ -53,8 +53,14 @@ impl Cache {
     pub fn open(path: &Path) -> Result<Self> {
         let absolute = platform::absolute(path)?;
         platform::plain_path(&absolute)?;
-        // Cache roots must be explicitly supplied; never reuse a live install.
-        if absolute.file_name().is_some_and(|n| n == "node_modules") {
+        // Cache roots must be explicitly supplied; never reuse a live install, and
+        // never sit inside one: a root under node_modules would be created by
+        // open() before restore() checks its destination, leaving an install tree
+        // that blocks every later restore.
+        if absolute
+            .components()
+            .any(|c| c.as_os_str() == "node_modules")
+        {
             bail!("cache_is_node_modules");
         }
         if !absolute.exists() {
@@ -180,8 +186,11 @@ impl Cache {
         platform::plain_path(&package.path)?;
         platform::absent(&destination)?;
         platform::publish(&tree_path, &destination).context("restore_publication_failed")?;
-        // The now-empty, exclusively created staging directory is safe to remove.
-        fs::remove_dir(staging)?;
+        // The install is published and visible; the restore has succeeded whatever
+        // happens to the now-empty staging directory. A transient hold on it (a
+        // scanner on Windows) must not turn a completed restore into a reported
+        // failure that a retry then cannot distinguish from a real one.
+        let _ = fs::remove_dir(staging);
         Ok(outcome("restore", &receipt, true, started))
     }
 }
@@ -232,8 +241,20 @@ fn read_entry(root: &Path, key: &str) -> Result<Receipt> {
 }
 
 /// Inspection never creates a cache, lock file, or staging directory.
+///
+/// It also accepts nothing that `open` would not: the ownership marker is
+/// required, so an unrelated directory that happens to hold a `.lock` and a
+/// well-formed receipt is not reported as a cache entry of unknown provenance.
 pub fn inspect(root: &Path, key: &str) -> Result<Receipt> {
     let root = platform::absolute(root)?;
+    let marker = root.join(".nmpool-cache");
+    platform::plain_path(&marker)?;
+    match fs::read(&marker) {
+        Ok(bytes) if bytes == b"nmpool/cache/v1\n" => {}
+        Ok(_) => bail!("cache_marker_invalid"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => bail!("cache_not_initialized"),
+        Err(e) => return Err(e).context("cache_marker_read"),
+    }
     platform::plain_path(&root.join(".lock"))?;
     let lock = File::open(root.join(".lock")).context("cache_not_initialized")?;
     FileExt::try_lock_shared(&lock).context("cache_busy")?;

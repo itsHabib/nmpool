@@ -52,8 +52,12 @@ impl Package {
             "bun.lock",
             "bun.lockb",
         ] {
-            if fs::symlink_metadata(path.join(name)).is_ok() {
-                bail!("unsupported_lockfile: {name}");
+            // Only a confirmed absence lets the package through: a metadata error
+            // other than NotFound is an incomplete read, not evidence of absence.
+            match fs::symlink_metadata(path.join(name)) {
+                Ok(_) => bail!("unsupported_lockfile: {name}"),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).with_context(|| format!("input_read: {name}")),
             }
         }
         let mut contents = BTreeMap::new();

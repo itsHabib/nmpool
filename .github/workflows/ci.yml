@@ -22,3 +22,12 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo run --locked -- --help
+      - run: cargo build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nmpool-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            target/release/nmpool
+            target/release/nmpool.exe
+          if-no-files-found: error
+          retention-days: 14

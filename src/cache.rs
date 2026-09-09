@@ -60,7 +60,7 @@ impl Cache {
         if !absolute.exists() {
             platform::private_dir(&absolute)?;
         }
-        let root = fs::canonicalize(absolute)?;
+        let root = dunce::canonicalize(absolute)?;
         let marker = root.join(".nmpool-cache");
         platform::plain_path(&marker)?;
         let initializing = match fs::read(&marker) {
@@ -212,12 +212,7 @@ fn outcome(operation: &str, receipt: &Receipt, cache_hit: bool, started: Instant
         files: receipt.entries.iter().filter(|e| e.kind == "file").count(),
         apparent_bytes: receipt.entries.iter().map(|e| e.bytes).sum(),
         elapsed_ms: started.elapsed().as_millis(),
-        transfer_method: if operation == "restore" {
-            "private-native-copy; clone-use-unmeasured"
-        } else {
-            "fresh-npm-ci-ignore-scripts"
-        }
-        .into(),
+        transfer_method: transfer_method(operation, cache_hit).into(),
         physical_bytes_saved: None,
     }
 }
@@ -251,4 +246,17 @@ pub fn inspect(root: &Path, key: &str) -> Result<Receipt> {
     let lock = File::open(root.join(".lock")).context("cache_not_initialized")?;
     FileExt::try_lock_shared(&lock).context("cache_busy")?;
     read_entry(&root, key)
+}
+
+fn transfer_method(operation: &str, cache_hit: bool) -> &'static str {
+    if operation == "prepare" && cache_hit {
+        return "verified-cache-hit";
+    }
+    if operation == "prepare" {
+        return "fresh-npm-ci-ignore-scripts";
+    }
+    if cfg!(windows) {
+        return "private-primary-stream-copy";
+    }
+    "private-native-copy; clone-use-unmeasured"
 }

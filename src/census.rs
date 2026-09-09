@@ -86,7 +86,7 @@ fn scan_tree(
         report.duplicate_worktree_enumerations += 1;
         return Ok(());
     }
-    let tree = fs::canonicalize(tree)?;
+    let tree = dunce::canonicalize(tree)?;
     scan_dir(&tree, &tree, depth, seen_packages, installs, report)
 }
 
@@ -161,6 +161,8 @@ fn hash_input(path: &Path) -> Result<Option<String>> {
 }
 
 fn make_row(tree: &Path, path: &Path, installs: &mut Vec<Handle>) -> Result<Row> {
+    // An unreadable config is a partial scan, not an unsupported/absent input.
+    hash_input(&path.join(".npmrc"))?;
     let nm = path.join("node_modules");
     let mut row = Row {
         worktree: tree.into(),
@@ -194,7 +196,7 @@ fn make_row(tree: &Path, path: &Path, installs: &mut Vec<Handle>) -> Result<Row>
                             installs.len() - 1
                         });
                     row.install_identity_group = Some(index);
-                    row.target = Some(fs::canonicalize(&nm)?);
+                    row.target = Some(dunce::canonicalize(&nm)?);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound && platform::is_link(&meta) => {
                     row.install_state = "broken-link".into()
@@ -215,7 +217,25 @@ fn make_row(tree: &Path, path: &Path, installs: &mut Vec<Handle>) -> Result<Row>
                 bail!("inputs_changed_during_census");
             }
         }
-        Err(e) => row.unsupported_reason = Some(format!("{e:#}")),
+        Err(e) => {
+            let reason = format!("{e:#}");
+            let expected = [
+                "workspace_unsupported",
+                "lifecycle_scripts_unsupported",
+                "package_manager_unsupported",
+                "unsupported_lockfile",
+                "lockfile_v3_required",
+                "local_dependency_unsupported",
+                "registry_unsupported",
+                "sha512_integrity_required",
+                "npmrc_unsupported",
+                "input_read: package-lock.json",
+            ];
+            if !expected.iter().any(|prefix| reason.starts_with(prefix)) {
+                return Err(e);
+            }
+            row.unsupported_reason = Some(reason);
+        }
     }
     Ok(row)
 }

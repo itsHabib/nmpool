@@ -14,7 +14,7 @@ use std::{
 
 fn scratch() -> (tempfile::TempDir, PathBuf) {
     let temp = tempfile::tempdir().unwrap();
-    let path = fs::canonicalize(temp.path()).unwrap();
+    let path = dunce::canonicalize(temp.path()).unwrap();
     (temp, path)
 }
 

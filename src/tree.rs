@@ -93,8 +93,8 @@ fn record_link(root: &Path, path: &Path, entry: &mut Entry) -> Result<()> {
     if target.is_absolute() {
         bail!("absolute_link: {}", path.display());
     }
-    let resolved = fs::canonicalize(path).context("broken_link")?;
-    if !resolved.starts_with(fs::canonicalize(root)?) {
+    let resolved = dunce::canonicalize(path).context("broken_link")?;
+    if !resolved.starts_with(dunce::canonicalize(root)?) {
         bail!("escaping_link: {}", path.display());
     }
     if !resolved.is_file() {

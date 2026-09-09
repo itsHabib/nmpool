@@ -43,7 +43,7 @@ impl Package {
     pub fn read(path: &Path) -> Result<Self> {
         let path = platform::absolute(path)?;
         platform::plain_path(&path)?;
-        let path = fs::canonicalize(path)?;
+        let path = dunce::canonicalize(path)?;
         reject_workspace(&path)?;
         for name in [
             "npm-shrinkwrap.json",
@@ -236,6 +236,8 @@ pub struct Runtime {
     pub node: Value,
     pub npm_version: String,
     pub recipe: Vec<String>,
+    pub created_file_mode: u32,
+    pub created_directory_mode: u32,
 }
 
 pub struct Toolchain {
@@ -264,12 +266,23 @@ impl Toolchain {
         let npm_version = String::from_utf8(checked_output(version)?)?
             .trim()
             .to_owned();
+        // Capture effective creation permissions without changing the process's
+        // global umask. Installs made under a different umask get a different key.
+        let permission_probe = tempfile::tempdir()?;
+        let probe_path = permission_probe.path().join("mode");
+        fs::write(&probe_path, b"")?;
+        let created_file_mode = platform::mode(&fs::metadata(&probe_path)?);
+        let directory_probe = permission_probe.path().join("directory");
+        fs::create_dir(&directory_probe)?;
+        let created_directory_mode = platform::mode(&fs::metadata(directory_probe)?);
         let runtime = Runtime {
             node_sha256: tree::file_hash(&node)?,
             npm_tree_sha256: tree::fingerprint(&tree::manifest(npm_root)?)?,
             node: info,
             npm_version,
             recipe: RECIPE.iter().map(|s| s.to_string()).collect(),
+            created_file_mode,
+            created_directory_mode,
         };
         Ok(Self {
             node,
@@ -336,16 +349,16 @@ fn checked_output(mut command: Command) -> Result<Vec<u8>> {
 
 fn resolve_executable(path: &Path) -> Result<PathBuf> {
     if path.components().count() > 1 || path.is_absolute() {
-        return Ok(fs::canonicalize(path)?);
+        return Ok(dunce::canonicalize(path)?);
     }
     for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
         let candidate = dir.join(path);
         if candidate.is_file() {
-            return Ok(fs::canonicalize(candidate)?);
+            return Ok(dunce::canonicalize(candidate)?);
         }
         #[cfg(windows)]
         if candidate.with_extension("exe").is_file() {
-            return Ok(fs::canonicalize(candidate.with_extension("exe"))?);
+            return Ok(dunce::canonicalize(candidate.with_extension("exe"))?);
         }
     }
     bail!("node_not_found");
@@ -353,7 +366,7 @@ fn resolve_executable(path: &Path) -> Result<PathBuf> {
 
 fn find_npm(node: &Path, supplied: Option<&Path>) -> Result<PathBuf> {
     if let Some(path) = supplied {
-        return Ok(fs::canonicalize(path)?);
+        return Ok(dunce::canonicalize(path)?);
     }
     let parent = node.parent().context("node_parent_missing")?;
     let mut candidates = vec![
@@ -362,7 +375,7 @@ fn find_npm(node: &Path, supplied: Option<&Path>) -> Result<PathBuf> {
     ];
     for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
         let npm = dir.join("npm");
-        if let Ok(real) = fs::canonicalize(npm)
+        if let Ok(real) = dunce::canonicalize(npm)
             && real.file_name().is_some_and(|name| name == "npm-cli.js")
         {
             candidates.push(real);
@@ -370,7 +383,7 @@ fn find_npm(node: &Path, supplied: Option<&Path>) -> Result<PathBuf> {
     }
     for path in candidates {
         if path.is_file() {
-            return Ok(fs::canonicalize(path)?);
+            return Ok(dunce::canonicalize(path)?);
         }
     }
     bail!("npm_cli_not_found: supply --npm-cli /path/to/npm/bin/npm-cli.js");

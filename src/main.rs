@@ -108,14 +108,16 @@ fn run(cli: Cli) -> Result<u8> {
 }
 
 fn install(args: Install, restore: bool) -> Result<u8> {
+    let started = std::time::Instant::now();
     let package = Package::read(&args.package)?;
     let tools = Toolchain::discover(&args.node, args.npm_cli.as_deref())?;
     let cache = Cache::open(&args.cache)?;
-    let outcome = if restore {
+    let mut outcome = if restore {
         cache.restore(&package, &tools)?
     } else {
         cache.prepare(&package, &tools)?
     };
+    outcome.elapsed_ms = started.elapsed().as_millis();
     println!("{}", serde_json::to_string_pretty(&outcome)?);
     Ok(0)
 }

@@ -17,7 +17,7 @@ OS-required variables and Node's directory on PATH, explicit empty user/global
 configs and a staging-local npm download cache. Scripts, audit and funding are
 disabled; dev/optional/peer dependencies are included. npm's version, distribution
 tree hash, Node executable hash, runtime/architecture/OS identity and full fixed
-recipe enter the key. No commands run in a live source package. Tests/builds are
+recipe and effective file/directory creation permissions enter the key. No commands run in a live source package. Tests/builds are
 the consumer's responsibility; the receipt is not a claim of application correctness.
 
 Roxiq's Sentry/esbuild/etc. install scripts are not yet supported. Ivy MCP is the

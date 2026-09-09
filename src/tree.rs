@@ -17,13 +17,13 @@ pub struct Entry {
 pub fn file_hash(path: &Path) -> Result<String> {
     let mut f = fs::File::open(path)?;
     let mut hash = Sha256::new();
-    let mut buffer = [0u8; 65536];
+    let mut buffer = vec![0u8; 65_536];
     loop {
         let n = f.read(&mut buffer)?;
         if n == 0 {
             break;
         }
-        hash.update(&buffer[..n]);
+        hash.update(buffer.get(..n).context("invalid_read_length")?);
     }
     Ok(format!("{:x}", hash.finalize()))
 }

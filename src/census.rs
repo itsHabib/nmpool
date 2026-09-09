@@ -199,7 +199,7 @@ fn make_row(tree: &Path, path: &Path, installs: &mut Vec<Handle>) -> Result<Row>
                     row.target = Some(dunce::canonicalize(&nm)?);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound && platform::is_link(&meta) => {
-                    row.install_state = "broken-link".into()
+                    row.install_state = "broken-link".into();
                 }
                 Err(e) => return Err(e).context("install_identity"),
             }
@@ -257,6 +257,13 @@ fn worktrees(root: &Path) -> Result<Vec<PathBuf>> {
         .collect()
 }
 
+#[cfg_attr(
+    unix,
+    allow(
+        clippy::unnecessary_wraps,
+        reason = "Windows path decoding can fail; both platforms share the fallible iterator contract"
+    )
+)]
 fn path_from_git(bytes: &[u8]) -> Result<PathBuf> {
     #[cfg(unix)]
     {

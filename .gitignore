@@ -2,3 +2,7 @@
 /.claude/
 /work/
 *.partial
+
+/mutants.out/
+/mutants.out.old/
+/lcov.info

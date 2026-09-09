@@ -1,3 +1,8 @@
+#![allow(
+    clippy::print_stdout,
+    reason = "The CLI intentionally writes its reports to stdout"
+)]
+
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use nmpool::{
@@ -30,7 +35,7 @@ enum Commands {
     },
     /// Build a fresh cache entry with npm ci --ignore-scripts in private staging.
     Prepare(Install),
-    /// Restore a verified private copy into an absent node_modules.
+    /// Restore a verified private copy into an absent `node_modules`.
     Restore(Install),
     /// Read and verify an entry without changing the cache or package.
     Inspect {
@@ -97,8 +102,8 @@ fn run(cli: Cli) -> Result<u8> {
             }
             Ok(if report.complete_within_scope { 0 } else { 2 })
         }
-        Commands::Prepare(args) => install(args, false),
-        Commands::Restore(args) => install(args, true),
+        Commands::Prepare(args) => install(&args, false),
+        Commands::Restore(args) => install(&args, true),
         Commands::Inspect { cache, key } => {
             let receipt = nmpool::cache::inspect(&cache, &key)?;
             println!("{}", serde_json::to_string_pretty(&receipt)?);
@@ -107,7 +112,7 @@ fn run(cli: Cli) -> Result<u8> {
     }
 }
 
-fn install(args: Install, restore: bool) -> Result<u8> {
+fn install(args: &Install, restore: bool) -> Result<u8> {
     let started = std::time::Instant::now();
     let package = Package::read(&args.package)?;
     let tools = Toolchain::discover(&args.node, args.npm_cli.as_deref())?;

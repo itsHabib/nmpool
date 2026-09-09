@@ -11,11 +11,27 @@ Requires Rust 1.89+ and Git. Prepare/restore also require native Node and npm.
 
 ```sh
 cargo build --release --locked
-cargo test --locked
+python scripts/check.py
 ```
 
 Native CI runs on macOS and Windows. Windows uses `nmpool.exe`; no WSL or admin
 rights are required for the baseline. Both platforms build their own cache entries.
+
+## Development checks
+
+`python scripts/check.py` runs the same formatting, strict Clippy, locked tests
+and warning-free documentation checks used by native CI. Use Python 3 (`python3`
+on Macs without a `python` alias); Make is an optional convenience. Clippy enables
+all, pedantic, nursery and cargo groups plus explicit panic, unwrap, indexing and
+debug-output restrictions. Complexity limits match Dossier/Rooms (20 cognitive,
+100 lines, six arguments). Scoped exceptions carry reasons.
+
+Every PR also checks the declared Rust 1.89 minimum and runs `cargo audit --deny
+warnings` with no advisory ignores. Install `cargo-audit` to run `make audit`
+locally. Optional manual workflows produce native macOS/Windows LCOV coverage
+and macOS mutation reports; they are audits, not claimed coverage or mutation
+score gates. Their local equivalents require `cargo-llvm-cov` plus LLVM tools, or
+`cargo-mutants`. Workflow success does not imply branch protection is configured.
 
 ## Use
 

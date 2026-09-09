@@ -37,7 +37,7 @@ pub struct Outcome {
 
 pub struct Cache {
     pub root: PathBuf,
-    _lock: File,
+    lock: File,
 }
 
 impl Drop for Cache {
@@ -45,7 +45,7 @@ impl Drop for Cache {
         // Explicit unlock also releases a Unix flock while a concurrently
         // spawned child temporarily holds an inherited descriptor before exec.
         // Closing the file remains the fallback if unlocking reports an error.
-        let _ = FileExt::unlock(&self._lock);
+        let _ = FileExt::unlock(&self.lock);
     }
 }
 
@@ -90,7 +90,7 @@ impl Cache {
             platform::plain_path(&root.join(dir))?;
             fs::create_dir_all(root.join(dir))?;
         }
-        Ok(Self { root, _lock: lock })
+        Ok(Self { root, lock })
     }
 
     pub fn load(&self, key: &str) -> Result<Receipt> {

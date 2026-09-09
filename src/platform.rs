@@ -104,7 +104,10 @@ pub fn private_dir(path: &Path) -> Result<()> {
 
 /// Atomic publication must refuse even an empty destination created after the
 /// preflight check. Unsafe code is confined to this native no-replace operation.
-#[allow(unsafe_code)]
+#[allow(
+    unsafe_code,
+    reason = "Native no-replace publication has no equivalent in std; each FFI call documents its safety preconditions"
+)]
 pub fn publish(source: &Path, destination: &Path) -> Result<()> {
     #[cfg(unix)]
     {

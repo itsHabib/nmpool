@@ -68,8 +68,16 @@ impl Package {
                 Err(e) => return Err(e).with_context(|| format!("input_read: {name}")),
             }
         }
-        let package: Value = serde_json::from_slice(&contents["package.json"])?;
-        let lock: Value = serde_json::from_slice(&contents["package-lock.json"])?;
+        let package: Value = serde_json::from_slice(
+            contents
+                .get("package.json")
+                .context("missing_package_manifest")?,
+        )?;
+        let lock: Value = serde_json::from_slice(
+            contents
+                .get("package-lock.json")
+                .context("missing_package_lock")?,
+        )?;
         validate_manifest(&package)?;
         validate_lock(&lock)?;
         let legacy_peer_deps = parse_npmrc(contents.get(".npmrc"))?;
@@ -280,7 +288,7 @@ impl Toolchain {
             npm_tree_sha256: tree::fingerprint(&tree::manifest(npm_root)?)?,
             node: info,
             npm_version,
-            recipe: RECIPE.iter().map(|s| s.to_string()).collect(),
+            recipe: RECIPE.iter().map(ToString::to_string).collect(),
             created_file_mode,
             created_directory_mode,
         };

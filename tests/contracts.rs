@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "Fixture setup and assertions must fail the test on error"
+)]
+
 use nmpool::{
     cache::{Cache, Receipt, inspect},
     census, digest,
@@ -322,7 +328,7 @@ fn cli_prepare_restore_inspect_roundtrip_without_network_dependencies() {
         String::from_utf8_lossy(&prepared.stderr)
     );
     let prepared: serde_json::Value = serde_json::from_slice(&prepared.stdout).unwrap();
-    assert_eq!(prepared["cache_hit"], false);
+    assert_eq!(*prepared.get("cache_hit").unwrap(), false);
     assert!(
         !pkg.path.join("node_modules").exists(),
         "prepare cannot touch source install"
@@ -346,7 +352,7 @@ fn cli_prepare_restore_inspect_roundtrip_without_network_dependencies() {
         .arg("--cache")
         .arg(&cache)
         .arg("--key")
-        .arg(prepared["key"].as_str().unwrap())
+        .arg(prepared.get("key").unwrap().as_str().unwrap())
         .output()
         .unwrap();
     assert!(
@@ -362,7 +368,7 @@ fn runtime_and_recipe_partition_keys() {
     let pkg = package(&root);
     let key = tools().key(&pkg.inputs).unwrap();
     let mut runtime = tools().runtime.clone();
-    runtime.node["arch"] = json!("different");
+    *runtime.node.get_mut("arch").unwrap() = json!("different");
     assert_ne!(
         key,
         digest(&serde_json::to_vec(&(&pkg.inputs, &runtime)).unwrap())
@@ -467,7 +473,7 @@ fn windows_junction_is_detected_and_never_traversed() {
         .arg(&target)
         .output()
         .unwrap();
-    assert!(status.status.success(), "{:?}", status);
+    assert!(status.status.success(), "{status:?}");
     assert!(platform::is_link(&fs::symlink_metadata(&junction).unwrap()));
     assert!(
         tree::manifest(&tree)

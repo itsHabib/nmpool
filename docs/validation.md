@@ -5,7 +5,8 @@
 Local macOS checks pass: cargo fmt --check, strict Clippy and the contract suite.
 The tests include a native Node/npm prepare/restore/inspect round trip without
 network dependencies. Regression checks cover failed-install log retention and
-scan/census alias equivalence. Native macOS and Windows CI are required on the PR head.
+scan/census alias equivalence, atomic restoration records, unknown/corrupt records,
+input/runtime/file drift, comparisons across branches, and cache-independent status. Native macOS and Windows CI are required on the PR head.
 The first Windows run found external-tool path handling defects; the patch uses
 safe Windows path simplification. Exact CI status is linked from the PR checks.
 
@@ -55,3 +56,14 @@ unproven. Keep the PR experimental. No merge or GC is authorized by these result
 - Main branch protection is not configured. Merge remains operator-controlled.
 - Script/workspace/private-registry support requires a separate design; it is not
   part of this trial. Physical savings and acceleration are still unmeasured.
+
+
+## Restoration-record trial
+
+A fresh task-owned snapshot of the same Ivy revision (MCP, shared scripts and its
+required course fixture) passed all nine MCP tests after restore. Status was clean
+both before and after the application tests. Appending a newline to the private
+SDK package manifest produced exit 2 and named that exact modified file; inspection
+of the cached seed still passed. The initial reduced snapshots omitted test fixture
+dependencies and failed until those source files were included. No live install
+was changed. This is functional evidence, not a new speed measurement.

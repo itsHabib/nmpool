@@ -38,6 +38,26 @@ enum Commands {
     Prepare(Install),
     /// Restore a verified private copy into an absent `node_modules`.
     Restore(Install),
+    /// Check a restored install for input or file drift. Exit 2 means not clean.
+    Status {
+        #[arg(long)]
+        package: PathBuf,
+        #[command(flatten)]
+        runtime: RuntimeArgs,
+    },
+    /// Explain why two packages need the same or different installs.
+    Explain {
+        #[arg(long)]
+        package: PathBuf,
+        #[arg(long)]
+        against: PathBuf,
+        #[command(flatten)]
+        runtime: RuntimeArgs,
+        #[arg(long)]
+        against_node: Option<PathBuf>,
+        #[arg(long)]
+        against_npm_cli: Option<PathBuf>,
+    },
     /// Read and verify an entry without changing the cache or package.
     Inspect {
         #[arg(long)]
@@ -53,6 +73,12 @@ struct Install {
     package: PathBuf,
     #[arg(long)]
     cache: PathBuf,
+    #[command(flatten)]
+    runtime: RuntimeArgs,
+}
+
+#[derive(Args)]
+struct RuntimeArgs {
     #[arg(long, default_value = "node")]
     node: PathBuf,
     /// Path to npm's bin/npm-cli.js; discovered from a standard install if omitted.
@@ -103,6 +129,30 @@ fn run(cli: Cli) -> Result<u8> {
             }
             Ok(if report.complete_within_scope { 0 } else { 2 })
         }
+        Commands::Status { package, runtime } => {
+            let report =
+                nmpool::state::status(&package, &runtime.node, runtime.npm_cli.as_deref())?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(if report.state == "clean" { 0 } else { 2 })
+        }
+        Commands::Explain {
+            package,
+            against,
+            runtime,
+            against_node,
+            against_npm_cli,
+        } => {
+            let package = Package::read(&package)?;
+            let against = Package::read(&against)?;
+            let tools = Toolchain::discover(&runtime.node, runtime.npm_cli.as_deref())?;
+            let other = Toolchain::discover(
+                against_node.as_deref().unwrap_or(&runtime.node),
+                against_npm_cli.as_deref().or(runtime.npm_cli.as_deref()),
+            )?;
+            let report = nmpool::state::explain(&package, &against, &tools, &other)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(0)
+        }
         Commands::Prepare(args) => install(&args, false),
         Commands::Restore(args) => install(&args, true),
         Commands::Inspect { cache, key } => {
@@ -116,7 +166,7 @@ fn run(cli: Cli) -> Result<u8> {
 fn install(args: &Install, restore: bool) -> Result<u8> {
     let started = std::time::Instant::now();
     let package = Package::read(&args.package)?;
-    let tools = Toolchain::discover(&args.node, args.npm_cli.as_deref())?;
+    let tools = Toolchain::discover(&args.runtime.node, args.runtime.npm_cli.as_deref())?;
     let cache = Cache::open(&args.cache)?;
     let mut outcome = if restore {
         cache.restore(&package, &tools)?

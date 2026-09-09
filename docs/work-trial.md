@@ -90,6 +90,11 @@ $seedJson | Set-Content (Join-Path $trial 'prepare.json')
 $restoreJson = & $nmpool restore --package $restoredPackage --cache $cache
 if ($LASTEXITCODE -ne 0) { throw 'Restore failed' }
 $restoreJson | Set-Content (Join-Path $trial 'restore.json')
+& $nmpool status --package $restoredPackage
+if ($LASTEXITCODE -ne 0) { throw 'Fresh restore does not match its receipt' }
+& $nmpool explain --package $baselinePackage --against $restoredPackage
+if ($LASTEXITCODE -ne 0) { throw 'Input comparison failed' }
+# same_install_requirements must be true for these identical package snapshots.
 
 & $nmpool inspect --cache $cache --key $seed.key | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Cache verification failed' }
@@ -105,9 +110,24 @@ left without node_modules. Stop if baseline tests also fail: the scripts-disable
 profile may not be useful for this package.
 
 For the independence check, edit a disposable ordinary file under the restored
-node_modules, then repeat `inspect`; cache verification must still succeed. Keep
+node_modules, then run `status --package $restoredPackage`: it must exit 2 and
+name that file under `file_changes`. Repeat `inspect`; cache verification must
+still succeed. Keep
 this mutation separate from the application test result. Do not edit cache files.
 The cache is local to this machine/runtime; do not copy a Mac cache to Windows.
+
+## Check as work evolves
+
+Run `status --package PATH` before relying on a restored install. It separates
+changed inputs/runtime from changed installed files; a clean snapshot exits 0.
+Exit 2 also covers absent or untracked installations. Corrupt receipts and read
+errors exit 1. No nonzero result means safe to ignore or automatically replace.
+
+Use `explain --package PATH --against OTHER_PATH` to compare worktree requirements.
+It shows differing input fields and both cache keys, with Git context. It does not
+identify which task/agent/process made the change. Existing installs from an older
+build have no restoration record and remain untracked; use a fresh trial worktree.
+These commands do not install packages, but invoke Node/npm identity probes.
 
 ## Decide whether it helps
 

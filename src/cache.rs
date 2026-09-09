@@ -174,6 +174,7 @@ impl Cache {
             &tree_path,
             &receipt.entries,
         )?;
+        crate::state::record(&tree_path, &package.path, &receipt)?;
         package.unchanged()?;
         toolchain.unchanged()?;
         platform::plain_path(&package.path)?;
@@ -223,15 +224,7 @@ fn read_entry(root: &Path, key: &str) -> Result<Receipt> {
     let receipt: Receipt = serde_json::from_slice(
         &fs::read(entry.join("receipt.json")).context("cache_miss_or_incomplete")?,
     )?;
-    if receipt.schema != SCHEMA || receipt.key != key {
-        bail!("receipt_identity_mismatch");
-    }
-    if crate::digest(&serde_json::to_vec(&(&receipt.inputs, &receipt.runtime))?) != key {
-        bail!("receipt_key_mismatch");
-    }
-    if tree::fingerprint(&receipt.entries)? != receipt.artifact_sha256 {
-        bail!("receipt_artifact_mismatch");
-    }
+    validate_receipt(&receipt, key)?;
     if tree::manifest(&entry.join("node_modules"))? != receipt.entries {
         bail!("artifact_mismatch");
     }
@@ -258,4 +251,18 @@ fn transfer_method(operation: &str, cache_hit: bool) -> &'static str {
         return "private-primary-stream-copy";
     }
     "private-native-copy; clone-use-unmeasured"
+}
+
+pub(crate) fn validate_receipt(receipt: &Receipt, key: &str) -> Result<()> {
+    validate_key(key)?;
+    if receipt.schema != SCHEMA || receipt.key != key {
+        bail!("receipt_identity_mismatch");
+    }
+    if crate::digest(&serde_json::to_vec(&(&receipt.inputs, &receipt.runtime))?) != key {
+        bail!("receipt_key_mismatch");
+    }
+    if tree::fingerprint(&receipt.entries)? != receipt.artifact_sha256 {
+        bail!("receipt_artifact_mismatch");
+    }
+    Ok(())
 }

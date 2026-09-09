@@ -552,3 +552,196 @@ fn scan_alias_preserves_census_output_and_exit_status() {
     assert_eq!(scan.stdout, census.stdout);
     assert_eq!(fs::read_dir(root).unwrap().count(), 0);
 }
+
+fn status_cli(path: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_nmpool"))
+        .arg("status")
+        .arg("--package")
+        .arg(path)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn status_tracks_restore_and_separates_input_and_file_drift_without_cache() {
+    let (_temp, root) = scratch();
+    let pkg = package(&root.join("package"));
+    let cache = Cache::open(&root.join("cache")).unwrap();
+    let receipt = seed(&cache, &pkg);
+    cache.restore(&pkg, tools()).unwrap();
+    assert!(pkg.path.join("node_modules/.nmpool-restore.json").is_file());
+    drop(cache);
+    fs::remove_dir_all(root.join("cache")).unwrap();
+    let clean = status_cli(&pkg.path);
+    assert!(
+        clean.status.success(),
+        "{}",
+        String::from_utf8_lossy(&clean.stderr)
+    );
+    let clean: serde_json::Value = serde_json::from_slice(&clean.stdout).unwrap();
+    assert_eq!(clean.get("state").unwrap(), "clean");
+    assert_eq!(clean.get("recorded_key").unwrap(), &receipt.key);
+    fs::write(pkg.path.join("node_modules/fixture.js"), b"patched").unwrap();
+    fs::remove_file(pkg.path.join("node_modules/bin/test")).unwrap();
+    fs::write(pkg.path.join("node_modules/added.js"), b"new").unwrap();
+    let drift = status_cli(&pkg.path);
+    assert_eq!(drift.status.code(), Some(2));
+    let drift: serde_json::Value = serde_json::from_slice(&drift.stdout).unwrap();
+    assert_eq!(drift.get("input_differences").unwrap(), &json!([]));
+    assert_eq!(
+        drift.get("file_changes").unwrap(),
+        &json!([
+            {"path":"added.js", "change":"added"},
+            {"path":"bin/test", "change":"removed"},
+            {"path":"fixture.js", "change":"modified"}
+        ])
+    );
+    fs::write(pkg.path.join(".npmrc"), b"legacy-peer-deps=true").unwrap();
+    let changed = status_cli(&pkg.path);
+    assert_eq!(changed.status.code(), Some(2));
+    let changed: serde_json::Value = serde_json::from_slice(&changed.stdout).unwrap();
+    assert_ne!(changed.get("requested_key"), changed.get("recorded_key"));
+    assert!(
+        changed
+            .get("input_differences")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .contains(&json!("/inputs/files/.npmrc"))
+    );
+    fs::write(pkg.path.join(".npmrc"), b"registry=https://example.com").unwrap();
+    let unsupported = status_cli(&pkg.path);
+    assert_eq!(unsupported.status.code(), Some(2));
+    let unsupported: serde_json::Value = serde_json::from_slice(&unsupported.stdout).unwrap();
+    assert!(
+        unsupported
+            .get("input_error")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .contains("npmrc_unsupported")
+    );
+}
+
+#[test]
+fn status_never_adopts_and_refuses_corrupt_records() {
+    let (_temp, root) = scratch();
+    let pkg = package(&root.join("package"));
+    assert_eq!(status_cli(&pkg.path).status.code(), Some(2));
+    fs::create_dir(pkg.path.join("node_modules")).unwrap();
+    let unknown = status_cli(&pkg.path);
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&unknown.stdout).contains("untracked"));
+    assert!(!pkg.path.join(".nmpool.lock").exists());
+    assert_eq!(
+        fs::read_dir(pkg.path.join("node_modules")).unwrap().count(),
+        0
+    );
+    fs::remove_dir(pkg.path.join("node_modules")).unwrap();
+    let cache = Cache::open(&root.join("cache")).unwrap();
+    seed(&cache, &pkg);
+    cache.restore(&pkg, tools()).unwrap();
+    fs::write(
+        pkg.path.join("node_modules/.nmpool-restore.json"),
+        b"{broken",
+    )
+    .unwrap();
+    let broken = status_cli(&pkg.path);
+    assert_eq!(broken.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&broken.stderr).contains("invalid_restoration_record"));
+}
+
+#[test]
+fn restoration_record_collision_does_not_publish_or_overwrite() {
+    let (_temp, root) = scratch();
+    let pkg = package(&root.join("package"));
+    let cache = Cache::open(&root.join("cache")).unwrap();
+    let mut receipt = seed(&cache, &pkg);
+    let entry = cache.root.join("entries").join(&receipt.key);
+    fs::write(
+        entry.join("node_modules/.nmpool-restore.json"),
+        b"package-owned",
+    )
+    .unwrap();
+    receipt.entries = tree::manifest(&entry.join("node_modules")).unwrap();
+    receipt.artifact_sha256 = tree::fingerprint(&receipt.entries).unwrap();
+    fs::write(
+        entry.join("receipt.json"),
+        serde_json::to_vec(&receipt).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        cache
+            .restore(&pkg, tools())
+            .unwrap_err()
+            .to_string()
+            .contains("restoration_record_collision")
+    );
+    assert!(!pkg.path.join("node_modules").exists());
+    assert_eq!(
+        fs::read(entry.join("node_modules/.nmpool-restore.json")).unwrap(),
+        b"package-owned"
+    );
+}
+
+#[test]
+fn explain_uses_inputs_not_branch_names_and_cli_reports_changed_file() {
+    let (_temp, root) = scratch();
+    let first = package(&root.join("first"));
+    let second = package(&root.join("second"));
+    git(&first.path, &["init", "-b", "feature-one"]);
+    git(&second.path, &["init", "-b", "feature-two"]);
+    let same = nmpool::state::explain(&first, &second, tools(), tools()).unwrap();
+    assert_eq!(same.package_git.branch.as_deref(), Some("feature-one"));
+    assert_eq!(same.against_git.branch.as_deref(), Some("feature-two"));
+    assert!(same.same_install_requirements);
+    assert!(same.differences.is_empty());
+    fs::write(second.path.join(".npmrc"), b"legacy-peer-deps=false").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nmpool"))
+        .arg("explain")
+        .arg("--package")
+        .arg(&first.path)
+        .arg("--against")
+        .arg(&second.path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report.get("same_install_requirements").unwrap(), false);
+    assert_eq!(
+        report.get("differences").unwrap(),
+        &json!(["/inputs/files/.npmrc"])
+    );
+    assert!(!first.path.join("node_modules").exists());
+    assert!(!second.path.join("node_modules").exists());
+}
+
+#[test]
+fn status_detects_runtime_drift_from_a_valid_historical_receipt() {
+    let (_temp, root) = scratch();
+    let pkg = package(&root.join("package"));
+    let cache = Cache::open(&root.join("cache")).unwrap();
+    seed(&cache, &pkg);
+    cache.restore(&pkg, tools()).unwrap();
+    let path = pkg.path.join("node_modules/.nmpool-restore.json");
+    let mut record: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let mut receipt: Receipt =
+        serde_json::from_value(record.get("receipt").unwrap().clone()).unwrap();
+    *receipt.runtime.node.get_mut("version").unwrap() = json!("historical-node");
+    // Model an internally consistent receipt produced by a different runtime.
+    receipt.key = digest(&serde_json::to_vec(&(&receipt.inputs, &receipt.runtime)).unwrap());
+    *record.get_mut("receipt").unwrap() = serde_json::to_value(receipt).unwrap();
+    fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let drift = status_cli(&pkg.path);
+    assert_eq!(drift.status.code(), Some(2));
+    let report: serde_json::Value = serde_json::from_slice(&drift.stdout).unwrap();
+    assert_eq!(report.get("file_changes").unwrap(), &json!([]));
+    assert_eq!(
+        report.get("input_differences").unwrap(),
+        &json!(["/runtime/node/version"])
+    );
+}

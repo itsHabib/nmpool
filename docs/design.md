@@ -17,7 +17,7 @@ OS-required variables and Node's directory on PATH, explicit empty user/global
 configs and a staging-local npm download cache. Scripts, audit and funding are
 disabled; dev/optional/peer dependencies are included. npm's version, distribution
 tree hash, Node executable hash, runtime/architecture/OS identity and full fixed
-recipe and effective file/directory creation permissions enter the key. No commands run in a live source package. Tests/builds are
+recipe and effective file/directory creation permissions enter the key. No install commands run in a live source package. Tests/builds are
 the consumer's responsibility; the receipt is not a claim of application correctness.
 
 Roxiq's Sentry/esbuild/etc. install scripts are not yet supported. Ivy MCP is the
@@ -68,6 +68,31 @@ Package traversal is bounded and does not follow directory links. Its JSON separ
 candidate input groups from a reuse key (always null during census). Partial scans
 exit 2. Unsupported install profiles are reported per row; missing worktree/read
 errors are never interpreted as zero references or permission to delete.
+
+## Restoration provenance and drift
+
+Restore writes a create-new `.nmpool-restore.json` inside the private staged tree,
+then publishes tree and record in one no-replace rename. It refuses a collision
+with a package-owned file. The record embeds the verified cache receipt plus a
+Unix timestamp and best-effort Git branch/commit context, which never enter the
+cache key. It is not a signed or tamper-proof activity history.
+
+Status takes a shared existing destination lock, validates the receipt's schema,
+input/runtime key and artifact fingerprint, and compares the full installed tree
+(excluding only that root receipt file) with the original manifest. It names
+added/removed/modified paths and separately compares current input/runtime fields.
+It rechecks inputs/toolchain and record contents before reporting. External editors
+and installers do not honor the lock: this remains an observation under exclusive
+user ownership, not a linearizable filesystem snapshot. No cache is needed.
+Missing receipts are untracked; invalid receipts, unsupported filesystem reads and
+unavailable toolchains cannot yield clean. Unsupported current package inputs
+produce a non-clean report. The command never rewrites an install or its record.
+
+Explain compares supported package inputs under selected toolchains, emitting keys
+and differing field names. It does not decode dependency-version changes, infer
+changes from a branch name, or attribute them to tasks/processes. Both status and
+explain execute identity probes (including temporary permission probes); neither
+runs an npm installation. Old installs are not retroactively recorded.
 
 ## Validation and release boundary
 

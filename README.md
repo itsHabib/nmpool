@@ -22,10 +22,54 @@ worktrees, correctness checks, timing, troubleshooting and cleanup.
 | `prepare` | Build a cache entry with fresh npm ci, or verify an existing matching entry | Cache only; not the source install |
 | `restore` | Verify and copy an entry into an absent node_modules | New private install plus a destination lock |
 | `inspect` | Read the receipt and verify every cached artifact | None |
+| `status` | Compare this restored install with its receipt and current inputs/runtime | No project/cache writes |
+| `explain` | Compare two packages' requested installs and name differing inputs | No project/cache writes |
 
 `prepare` does not capture an existing install. `restore` does not fetch packages
 or fall back to npm on a miss. `inspect` verifies the cache, not application tests.
 There is no automatic integration with Git worktree creation.
+
+## Daily use
+
+```sh
+# Inventory first; unsupported_reason explains packages outside this profile.
+nmpool scan --repo /path/to/repo --json
+# See whether two worktrees need the same installation.
+nmpool explain --package /path/to/first/package --against /path/to/second/package
+# Prepare once, then restore only into a worktree without node_modules.
+nmpool prepare --package /path/to/first/package --cache /path/to/private-cache
+nmpool restore --package /path/to/second/package --cache /path/to/private-cache
+# Check before running the package's own tests/build.
+nmpool status --package /path/to/second/package
+```
+
+`status` prints JSON. Exit 0 means inputs/runtime and installed files match the
+restoration snapshot; exit 2 means `drifted`, `untracked`, or `absent`; exit 1 means
+verification failed. Drift lists added/removed/modified files separately from
+input differences. Unsupported current inputs appear in `input_error`. No receipt
+means untracked, including installs from older nmpool builds; no adoption occurs.
+
+`explain` names differing input fields (for example `/inputs/files/package-lock.json`)
+and emits both keys. It compares raw file fingerprints, not individual dependency
+version changes. Branch names are context: different branches can request the same
+install. By default it compares both packages under the selected current Node/npm;
+use `--against-node` and `--against-npm-cli` to select a different second runtime.
+A successful comparison exits 0 even when requirements differ.
+
+Both commands accept `--node` and `--npm-cli`. They execute local Node/npm identity
+probes and Git reads, but no install commands; probes create temporary files outside
+the project. Stop concurrent installers/editors for a consistent snapshot.
+
+Every new restore includes `node_modules/.nmpool-restore.json`: the original input
+and artifact receipt, restoration time, and available Git branch/commit context.
+The record is published atomically with the install, works without the cache, and
+moves with the worktree. It is local provenance, not a tamper-proof audit or a record
+of which process/agent changed files. Do not edit the receipt. A reserved-name
+collision is refused. Running npm ci may remove it, making the install untracked.
+
+`status` never repairs, deletes, or refreshes an install. If inputs changed, prepare
+the new requirement and use a fresh worktree. A clean status does not replace your
+application tests or establish continuous monitoring.
 
 ## Build
 

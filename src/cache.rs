@@ -57,10 +57,13 @@ impl Cache {
         // never sit inside one: a root under node_modules would be created by
         // open() before restore() checks its destination, leaving an install tree
         // that blocks every later restore.
-        if absolute
-            .components()
-            .any(|c| c.as_os_str() == "node_modules")
-        {
+        // Compared case-insensitively: macOS and Windows volumes fold case, so
+        // `Node_Modules` aliases the install directory there.
+        if absolute.components().any(|c| {
+            c.as_os_str()
+                .to_str()
+                .is_some_and(|s| s.eq_ignore_ascii_case("node_modules"))
+        }) {
             bail!("cache_is_node_modules");
         }
         if !absolute.exists() {

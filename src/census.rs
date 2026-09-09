@@ -228,6 +228,8 @@ fn make_row(tree: &Path, path: &Path, installs: &mut Vec<Handle>) -> Result<Row>
                 "local_dependency_unsupported",
                 "registry_unsupported",
                 "sha512_integrity_required",
+                "resolved_url_required",
+                "integrity_required",
                 "npmrc_unsupported",
                 "input_read: package-lock.json",
             ];

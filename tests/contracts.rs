@@ -307,6 +307,15 @@ fn cache_root_inside_node_modules_is_refused_before_anything_is_created() {
 }
 
 #[test]
+fn cache_root_under_a_case_variant_of_node_modules_is_refused() {
+    let (_temp, root) = scratch();
+    let nested = root.join("Node_Modules").join("cache");
+    let err = Cache::open(&nested).err().unwrap().to_string();
+    assert!(err.contains("cache_is_node_modules"), "{err}");
+    assert!(!root.join("Node_Modules").exists());
+}
+
+#[test]
 fn inspect_requires_the_ownership_marker() {
     let (_temp, root) = scratch();
     let unowned = root.join("unowned");

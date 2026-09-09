@@ -2,9 +2,10 @@
 
 ## Functional checks
 
-Local macOS checks pass: cargo fmt --check, strict Clippy and 14 contract tests.
+Local macOS checks pass: cargo fmt --check, strict Clippy and the contract suite.
 The tests include a native Node/npm prepare/restore/inspect round trip without
-network dependencies. Native macOS and Windows CI are required on the PR head.
+network dependencies. Regression checks cover failed-install log retention and
+scan/census alias equivalence. Native macOS and Windows CI are required on the PR head.
 The first Windows run found external-tool path handling defects; the patch uses
 safe Windows path simplification. Exact CI status is linked from the PR checks.
 
@@ -44,3 +45,13 @@ about 2.8 times slower than warm npm ci. Do not deploy broadly or remove integri
 checks on the strength of this trial. Roxiq install scripts remain unsupported;
 actual Windows-laptop performance, ReFS acceleration and independent review remain
 unproven. Keep the PR experimental. No merge or GC is authorized by these results.
+
+
+## Remaining release work
+
+- No independent review has been submitted on PR #1. CI is not a bug-free claim.
+- Run the [Windows work trial](work-trial.md) against a supported real package.
+- Coverage and mutation workflows are configured but have not been run.
+- Main branch protection is not configured. Merge remains operator-controlled.
+- Script/workspace/private-registry support requires a separate design; it is not
+  part of this trial. Physical savings and acceleration are still unmeasured.

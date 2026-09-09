@@ -25,6 +25,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Read-only inventory of registered Git worktrees. No npm execution.
+    #[command(visible_alias = "scan")]
     Census {
         #[arg(long, required = true)]
         repo: Vec<PathBuf>,

@@ -5,12 +5,37 @@ A local, private dependency-install cache for macOS and Windows.
 Cache entries are platform-specific. Existing installs are never adopted, linked,
 replaced or deleted. Every restored worktree gets its own writable files.
 
+## Start here
+
+**Experimental, draft PR #1; main is only the bootstrap.** Native macOS/Windows
+checks pass, but independent review and real Windows-workload acceptance remain
+open. The small Ivy trial restored in 1.189 s versus 0.425 s for warm npm ci:
+performance benefit is not established.
+
+For a work machine, follow the [Windows installation and trial guide](docs/work-trial.md).
+It covers the PR checkout, binary alternative, compatibility check, disposable
+worktrees, correctness checks, timing, troubleshooting and cleanup.
+
+| Command | What it does | Changes |
+|---|---|---|
+| `scan` (alias of `census`) | Inventory Git worktrees and identify supported input candidates | None; no npm execution |
+| `prepare` | Build a cache entry with fresh npm ci, or verify an existing matching entry | Cache only; not the source install |
+| `restore` | Verify and copy an entry into an absent node_modules | New private install plus a destination lock |
+| `inspect` | Read the receipt and verify every cached artifact | None |
+
+`prepare` does not capture an existing install. `restore` does not fetch packages
+or fall back to npm on a miss. `inspect` verifies the cache, not application tests.
+There is no automatic integration with Git worktree creation.
+
 ## Build
 
 Requires Rust 1.89+ and Git. Prepare/restore also require native Node and npm.
 
 ```sh
-cargo build --release --locked
+gh repo clone itsHabib/nmpool
+cd nmpool
+gh pr checkout 1
+cargo install --path . --locked
 python scripts/check.py
 ```
 
@@ -36,7 +61,7 @@ score gates. Their local equivalents require `cargo-llvm-cov` plus LLVM tools, o
 ## Use
 
 ```sh
-nmpool census --repo /path/to/repo --json
+nmpool scan --repo /path/to/repo --json
 nmpool prepare --package /path/to/package --cache /path/to/private-cache
 nmpool restore --package /path/to/new-worktree/package --cache /path/to/private-cache
 nmpool inspect --cache /path/to/private-cache --key KEY_FROM_PREPARE
@@ -69,7 +94,9 @@ needed. Do not run other installers/watchers in that destination during restore.
 
 Roxiq's install scripts are currently refused; Ivy MCP is the initial supported
 personal workload. This is a usable experimental mechanism, not a performance claim.
-Failed staging and preparation logs are retained under `CACHE/staging` for inspection;
+Preparation staging, npm download caches, and logs are retained under `CACHE/staging`
+on success or failure; failed npm runs retain stdout and stderr in `install.log`.
+Failed restore staging is retained under the destination package. These are for inspection;
 they can consume disk space. There is no automatic cleanup. Never point the cache at
 an existing dependency tree or an unrelated nonempty directory.
 

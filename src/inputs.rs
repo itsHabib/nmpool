@@ -311,7 +311,7 @@ impl Toolchain {
         Ok(())
     }
 
-    pub fn install(&self, package: &Path, scratch: &Path, legacy: bool) -> Result<Vec<u8>> {
+    pub fn install(&self, package: &Path, scratch: &Path, legacy: bool) -> Result<()> {
         fs::write(scratch.join("user.npmrc"), b"")?;
         fs::write(scratch.join("global.npmrc"), b"")?;
         let mut command = isolated_node(&self.node);
@@ -326,7 +326,21 @@ impl Toolchain {
             .arg(scratch.join("global.npmrc"))
             .arg("--cache")
             .arg(scratch.join("npm-cache"));
-        checked_output(command)
+        let log_path = scratch.join("install.log");
+        let output = command.output().context("spawn_toolchain")?;
+        let mut log = b"--- stdout ---\n".to_vec();
+        log.extend_from_slice(&output.stdout);
+        log.extend_from_slice(b"\n--- stderr ---\n");
+        log.extend_from_slice(&output.stderr);
+        fs::write(&log_path, log).context("install_log_write")?;
+        if !output.status.success() {
+            bail!(
+                "npm_install_failed: {}; log: {}",
+                output.status,
+                log_path.display()
+            );
+        }
+        Ok(())
     }
 }
 

@@ -114,8 +114,7 @@ impl Cache {
             .keep();
         let build = staging.join("build");
         package.stage(&build)?;
-        let install_log = toolchain.install(&build, &staging, package.inputs.legacy_peer_deps)?;
-        fs::write(staging.join("install.log"), install_log)?;
+        toolchain.install(&build, &staging, package.inputs.legacy_peer_deps)?;
         for (name, bytes) in &package.contents {
             if fs::read(build.join(name))? != *bytes {
                 bail!("staged_inputs_changed: {name}");

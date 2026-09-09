@@ -501,3 +501,54 @@ fn held_destination_file_is_not_overwritten() {
     assert!(platform::publish(&root.join("source"), &root.join("target")).is_err());
     assert!(root.join("source").exists());
 }
+
+#[test]
+fn failed_install_retains_both_output_streams_without_publishing() {
+    let (_temp, root) = scratch();
+    let pkg = package(&root.join("package"));
+    let fake_cli = root.join("failing-npm.js");
+    fs::write(
+        &fake_cli,
+        b"process.stdout.write('fixture stdout'); process.stderr.write('fixture stderr'); process.exitCode = 17;",
+    ).unwrap();
+    let failing = Toolchain {
+        node: tools().node.clone(),
+        npm_cli: fake_cli,
+        runtime: tools().runtime.clone(),
+    };
+    let cache = Cache::open(&root.join("cache")).unwrap();
+    let error = cache.prepare(&pkg, &failing).unwrap_err();
+    assert!(error.to_string().contains("npm_install_failed"));
+    assert!(error.to_string().contains("install.log"));
+    let stage = fs::read_dir(cache.root.join("staging"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let log = fs::read_to_string(stage.join("install.log")).unwrap();
+    assert!(log.contains("fixture stdout"));
+    assert!(log.contains("fixture stderr"));
+    assert_eq!(fs::read_dir(cache.root.join("entries")).unwrap().count(), 0);
+    assert!(!pkg.path.join("node_modules").exists());
+}
+
+#[test]
+fn scan_alias_preserves_census_output_and_exit_status() {
+    let (_temp, root) = scratch();
+    // A non-repository produces a partial report, without changing the directory.
+    let run = |verb| {
+        Command::new(env!("CARGO_BIN_EXE_nmpool"))
+            .args([verb, "--repo"])
+            .arg(&root)
+            .arg("--json")
+            .output()
+            .unwrap()
+    };
+    let census = run("census");
+    let scan = run("scan");
+    assert_eq!(census.status.code(), Some(2));
+    assert_eq!(scan.status.code(), census.status.code());
+    assert_eq!(scan.stdout, census.stdout);
+    assert_eq!(fs::read_dir(root).unwrap().count(), 0);
+}

@@ -1,6 +1,7 @@
 [package]
 name = "nmpool"
 version = "0.1.0"
+authors = ["Michael Habib"]
 edition = "2024"
 rust-version = "1.89"
 description = "Verified private npm install reuse for macOS and Windows"

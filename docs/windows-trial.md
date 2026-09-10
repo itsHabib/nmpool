@@ -6,22 +6,13 @@ still need this trial. The small Mac/Ivy trial was slower than warm npm ci.
 
 ## Get the implementation
 
-Authenticate GitHub CLI with an account that can read `itsHabib/nmpool`.
-While PR #1 is open, check out that PR; after it merges, use main.
-In a directory where a new `nmpool` checkout can be created, use PowerShell:
+Use the merged implementation on `main`. In a directory where a new `nmpool`
+checkout can be created, use PowerShell:
 
 ```powershell
-gh repo clone itsHabib/nmpool nmpool
+git clone https://github.com/itsHabib/nmpool.git nmpool
 if ($LASTEXITCODE -ne 0) { throw 'Clone failed' }
 Set-Location nmpool
-$prState = gh pr view 1 --json state --jq .state
-if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve implementation PR state' }
-if ($prState -eq 'OPEN') {
-    gh pr checkout 1
-    if ($LASTEXITCODE -ne 0) { throw 'PR checkout failed' }
-} elseif ($prState -ne 'MERGED') {
-    throw 'Implementation PR closed without merging; inspect before continuing'
-}
 git rev-parse HEAD  # Record this revision with your results.
 cargo install --path . --locked
 if ($LASTEXITCODE -ne 0) { throw 'Build/install failed' }
@@ -36,10 +27,10 @@ Python 3 plus Rust's rustfmt/clippy components are needed only if you also run
 `python scripts/check.py` yourself.
 
 Alternatively, download the `nmpool-Windows-X64` artifact from a successful
-[PR CI run](https://github.com/itsHabib/nmpool/pull/1/checks), extract it, and set
+[CI run for main](https://github.com/itsHabib/nmpool/actions/workflows/ci.yml?query=branch%3Amain), extract it, and set
 `$nmpool` to that executable's full path. This avoids installing Rust. Record the
 run's commit; artifacts expire after 14 days and are not a signed release or an
-installer. The Windows artifact targets x64; native Windows ARM64 is untested.
+installer. Downloading Actions artifacts requires GitHub sign-in. The Windows artifact targets x64; native Windows ARM64 is untested.
 
 ## Quick smoke test before choosing a work package
 

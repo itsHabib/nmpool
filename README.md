@@ -2,6 +2,9 @@
 
 A local, private dependency-install cache for macOS and Windows.
 
+[![CI](https://github.com/itsHabib/nmpool/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/itsHabib/nmpool/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Cache entries are platform-specific. Existing installs are never adopted, linked,
 replaced or deleted. Every restored worktree gets its own writable files.
 
@@ -12,7 +15,7 @@ acceptance remains open. The small Ivy trial restored in 1.189 s versus 0.425 s 
 performance benefit is not established.
 
 On a Windows machine, follow the [Windows installation and trial guide](docs/windows-trial.md).
-It covers the PR checkout, binary alternative, compatibility check, disposable
+It covers installation, the binary alternative, compatibility checks, disposable
 worktrees, correctness checks, timing, troubleshooting and cleanup.
 Why copy mode is not the end of the story, and what comes next, is in
 [docs/direction.md](docs/direction.md).
@@ -77,12 +80,18 @@ application tests or establish continuous monitoring.
 Requires Rust 1.89+ and Git. Prepare/restore also require native Node and npm.
 
 ```sh
-gh repo clone itsHabib/nmpool
+git clone https://github.com/itsHabib/nmpool.git
 cd nmpool
-gh pr checkout 1 # Only while implementation PR #1 is still open.
 cargo install --path . --locked
-python scripts/check.py
+nmpool --version
+python3 scripts/smoke.py --binary nmpool
 ```
+
+The smoke test needs Python 3 and native Node/npm. It creates a disposable empty
+package and retains its evidence at the printed path. On Windows, use `python`
+in place of `python3`. See the [release guide](docs/releasing.md) for release scope
+and checks. This experimental CLI is installed from source; it is not published
+on crates.io.
 
 Native CI runs on macOS and Windows. Windows uses `nmpool.exe`; no WSL or admin
 rights are required for the baseline. Both platforms build their own cache entries.

@@ -12,10 +12,10 @@ acceptance remains open. The small Ivy trial restored in 1.189 s versus 0.425 s 
 performance benefit is not established.
 
 On a Windows machine, follow the [Windows installation and trial guide](docs/windows-trial.md).
-Why copy mode is not the end of the story, and what comes next, is in
-[docs/direction.md](docs/direction.md).
 It covers the PR checkout, binary alternative, compatibility check, disposable
 worktrees, correctness checks, timing, troubleshooting and cleanup.
+Why copy mode is not the end of the story, and what comes next, is in
+[docs/direction.md](docs/direction.md).
 
 | Command | What it does | Changes |
 |---|---|---|

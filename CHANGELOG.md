@@ -12,4 +12,3 @@ All notable changes to this project are documented here. The format follows
 - Native macOS and Windows support; installs are never adopted, linked,
   replaced or deleted.
 - Clean profile only: npm lockfile v3, public registry, scripts disabled.
-- `docs/direction.md` records the measured case for a future share mode.

@@ -2,8 +2,7 @@
 
 The first public release is an experimental, source-installable CLI for macOS
 and Windows. The package is deliberately marked `publish = false`: a GitHub
-release does not publish it to crates.io. Shared installs and broader package
-profiles remain proposals in [direction.md](direction.md).
+release does not publish it to crates.io.
 
 ## Candidate checks
 

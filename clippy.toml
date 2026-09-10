@@ -1,0 +1,5 @@
+# Strict repository limits, enforced by scripts/check.py and native CI.
+cognitive-complexity-threshold = 10
+# Nesting <= 2 inside each function is checked by tests/style.rs.
+too-many-lines-threshold = 100
+too-many-arguments-threshold = 6

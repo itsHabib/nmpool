@@ -1,0 +1,174 @@
+name: Claude Code
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # Claude posts review comments back to the PR
+      issues: write # Claude posts comments back on tagged issues
+      id-token: write
+      actions: read # Required for Claude to read CI results on PRs
+    steps:
+      # The action diffs via `git hash-object <path>` against the working
+      # tree, so files a PR adds must exist on disk — a main checkout (any
+      # fetch depth) lacks them and the review dies before it starts. Check
+      # out the PR head instead, but ONLY when the head lives in this repo:
+      # in-repo branches require push access, so their content is as trusted
+      # as the commenter the action already gates on. A fork head never
+      # replaces the trusted workspace — fork PRs keep the main checkout.
+      - name: Resolve review ref (PR head for same-repo PRs)
+        id: review_ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_NUMBER: >-
+            ${{
+              (github.event_name == 'issue_comment' && github.event.issue.pull_request
+                && github.event.issue.number)
+              || ((github.event_name == 'pull_request_review'
+                  || github.event_name == 'pull_request_review_comment')
+                && github.event.pull_request.number)
+              || ''
+            }}
+        run: |
+          set -euo pipefail
+          # Start from the trusted default branch, never from the event's own ref:
+          # for review events that ref is refs/pull/N/merge, which a fork controls.
+          ref="refs/heads/${DEFAULT_BRANCH}"
+          if [ -n "${PR_NUMBER}" ]; then
+            same_repo=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
+              --jq '.head.repo.full_name == .base.repo.full_name')
+            if [ "${same_repo}" = "true" ]; then
+              ref="refs/pull/${PR_NUMBER}/head"
+            fi
+          fi
+          echo "resolved review ref: ${ref}"
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 — audited 2026-06-12
+        with:
+          ref: ${{ steps.review_ref.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@0cb4f3e5e764d2e00407d29b6bf0aa9df0976d88 # v1 — audited 2026-06-12
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+          # This is an optional setting that allows Claude to read CI results on PRs
+          additional_permissions: |
+            actions: read
+
+          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
+          # prompt: 'Update the pull request description to include a summary of changes.'
+
+          # Gate counts a reviewer only when it finds a formal GitHub review
+          # pinned to the exact judged head: classifyPanel in
+          # cmd/gate/internal/evidence/panel.go requires User.Type=Bot, a
+          # COMMENTED/APPROVED/CHANGES_REQUESTED state, and commit_id == head.
+          # An issue comment satisfies none of that, so every PR parked on
+          # `missing=[claude]` while a thorough review sat right there in the
+          # thread — and readiness escalated alongside it for want of any
+          # review decision. codex only escapes this through a bespoke
+          # comment-regex exemption; claude has no such carve-out.
+          #
+          # claude[bot] already satisfies the bot-identity and name matching,
+          # so publishing the review AS a review is the whole fix. Appended to
+          # the system prompt rather than set as `prompt`, so `@claude <any
+          # other request>` keeps behaving exactly as before.
+          claude_args: >-
+            --allowed-tools "Bash(gh pr review:*)"
+            --append-system-prompt
+            "When you are asked to review a pull request, publish the review as
+            a formal GitHub review pinned to the head commit you actually
+            reviewed: gh pr review <number> --repo <owner/repo> --comment
+            --body <your review>. Publish it as a review, not as an issue
+            comment, and state the head SHA you reviewed in the body. Use
+            --request-changes rather than --comment only when you found a
+            blocking defect; never approve. If the review command fails, say so
+            plainly instead of silently falling back to a comment."
+
+      # The instruction above asks the model to publish a formal review; in
+      # practice it keeps posting an issue comment, and an issue comment has no
+      # commit anchor for gate's panel to check. Asking harder cannot fix that:
+      # gate refuses provider prose as authority precisely because a model
+      # writes it, so even a body that named the head would not count.
+      #
+      # This step is the authority the prose is not. The checkout above resolved
+      # a specific ref and the reviewer ran against exactly that tree, so the
+      # workflow can state the reviewed head as fact, in a fixed shape gate
+      # parses — the same structural role the Codex connector's own
+      # "Reviewed commit:" line plays. See workflowAttestation in
+      # cmd/gate/internal/evidence/panel.go.
+      #
+      # Attest only for a review request that succeeded: `@claude fix the typo`
+      # runs this same job and must never clear a review panel.
+      - name: Attest the reviewed head for gate's review panel
+        if: >-
+          steps.claude.outcome == 'success'
+          && github.event_name == 'issue_comment'
+          && github.event.issue.pull_request
+          && contains(github.event.comment.body, '@claude')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REVIEW_REF: ${{ steps.review_ref.outputs.ref }}
+          # Read as data, never interpolated into the script: the body is
+          # attacker-controlled on a public repo.
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          # The trigger must be a review *request*, not any comment containing
+          # the word. `@claude how do I review permissions?` and `@claude the
+          # code-review tool is broken` both run this job and must not attest,
+          # so match the request verb anchored at the start of the comment —
+          # something an Actions `contains()` cannot express.
+          #
+          # This is precision over recall on purpose. `@claude could you review`
+          # and `Hey @claude review this` are real review requests that do not
+          # match, and they are supposed to not match: a missed attestation
+          # leaves the panel incomplete and gate parks for judgment, which is
+          # merely today's behaviour, while a false one credits a review that
+          # never happened. The request must END at the verb (modulo a few
+          # no-op tails), because `@claude review permissions` and `@claude
+          # review the failing CI logs` start the same way and are not PR code
+          # reviews. The WHOLE body is validated as one string — bash =~, not
+          # grep, whose ^/$ anchor per line — so a `@claude review` first line
+          # followed by countermanding instructions does not attest either.
+          # Widen this pattern only toward forms that cannot also match such
+          # a request.
+          shopt -s nocasematch
+          re='^[[:space:]]*@claude[[:space:]]+(please[[:space:]]+)?review([[:space:]]+(this([[:space:]]+pr)?|the[[:space:]]+pr))?[[:space:]]*[.!]?[[:space:]]*$'
+          if [[ ! "${COMMENT_BODY}" =~ $re ]]; then
+            echo "not a review request — no attestation"
+            exit 0
+          fi
+          # A fork PR keeps the main checkout by design, so HEAD is not the
+          # reviewed head and there is nothing truthful to attest.
+          if [ "${REVIEW_REF}" != "refs/pull/${PR_NUMBER}/head" ]; then
+            echo "reviewed ${REVIEW_REF}, not the PR head — no attestation"
+            exit 0
+          fi
+          head_sha="$(git rev-parse HEAD)"
+          echo "attesting claude review of ${head_sha}"
+          printf '%s\n**Reviewer:** claude\n**Reviewed commit:** `%s`\n' \
+            '<!-- gate:review-attestation -->' "${head_sha}" \
+            | gh pr comment "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --body-file -

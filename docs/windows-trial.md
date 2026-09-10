@@ -51,7 +51,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Smoke test failed; see printed evidence path' 
 ```
 
 This uses an empty dependency fixture in a new temporary directory: no downloads,
-work repository, credentials or live install are needed. It checks prepare, restore,
+repository, credentials or live install are needed. It checks prepare, restore,
 clean status, refusal to overwrite, consumer drift and unchanged cache integrity.
 Both native CI runners execute the same script. It retains `results.json` and the
 fixture at the printed path on success or failure; delete only that disposable
@@ -85,7 +85,7 @@ Stop if this workload needs any of the following:
   Only project `legacy-peer-deps=true/false` is supported. Preparation deliberately
   does not inherit your normal npm credentials, proxy or certificate environment.
 
-This restriction is likely to exclude some work monorepos. Record the refusal;
+This restriction is likely to exclude some private monorepos. Record the refusal;
 do not edit the lockfile or remove scripts to make a production workload pass.
 
 ## Prove one restore works

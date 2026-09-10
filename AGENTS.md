@@ -15,7 +15,7 @@ Read README.md and docs/design.md before changing behavior.
   across all targets/features, locked tests, and warning-free documentation.
   CI also checks Rust 1.89 and audits dependencies without advisory ignores.
   Native macOS and Windows CI are required; cross-builds
-  alone do not prove Windows behavior. Actual work-laptop benefit remains a separate check.
+  alone do not prove Windows behavior. Benefit on a real Windows machine remains a separate check.
 - Before publishing, inspect tracked files for local paths, secrets and unrelated artifacts.
 - Do not merge; the operator owns merge authority and grants.
 

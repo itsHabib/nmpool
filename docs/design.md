@@ -114,6 +114,6 @@ prepare/restore/inspect CLI test runs without network dependencies on both platf
 The first personal workload uses an isolated Ivy worktree; live installs stay
 untouched. Timing must include toolchain fingerprinting and all integrity checks.
 Measure cold seed cost and repeated restore against warm npm ci separately. Native
-Windows CI establishes behavior on its runner, not benefit on the actual work laptop.
-No disk savings, work-laptop acceptance, independent review or merge is implied by
+Windows CI establishes behavior on its runner, not benefit on a real Windows machine.
+No disk savings, real-machine acceptance, independent review or merge is implied by
 local test success. Do not broaden scope on the basis of one small-package benchmark.

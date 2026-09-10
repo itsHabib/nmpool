@@ -94,6 +94,29 @@ pub fn status(path: &Path, node: &Path, npm_cli: Option<&Path>) -> Result<Status
     if !path.is_dir() {
         bail!("package_not_directory");
     }
+    let lock_path = path.join(".nmpool.lock");
+    platform::plain_path(&lock_path)?;
+    let lock = match fs::File::open(&lock_path) {
+        Ok(lock) => {
+            FileExt::try_lock_shared(&lock).context("destination_busy")?;
+            Some(lock)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e).context("destination_lock_read"),
+    };
+    let result = status_locked(&path, node, npm_cli, lock.is_some());
+    if let Some(lock) = lock {
+        FileExt::unlock(&lock).context("destination_unlock_failed")?;
+    }
+    result
+}
+
+fn status_locked(
+    path: &Path,
+    node: &Path,
+    npm_cli: Option<&Path>,
+    has_lock: bool,
+) -> Result<Status> {
     let installed = path.join("node_modules");
     platform::plain_path(&installed)?;
     let mut report = Status {
@@ -105,7 +128,7 @@ pub fn status(path: &Path, node: &Path, npm_cli: Option<&Path>) -> Result<Status
         file_changes: Vec::new(),
         restored_at_unix_seconds: None,
         restored_git: None,
-        current_git: git_context(&path),
+        current_git: git_context(path),
     };
     match fs::symlink_metadata(&installed) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(report),
@@ -123,13 +146,10 @@ pub fn status(path: &Path, node: &Path, npm_cli: Option<&Path>) -> Result<Status
         }
         Err(e) => return Err(e).context("restoration_record_read"),
     };
-    platform::plain_path(&path.join(".nmpool.lock"))?;
-    let lock = fs::File::open(path.join(".nmpool.lock")).context("destination_lock_missing")?;
-    FileExt::try_lock_shared(&lock).context("destination_busy")?;
-    // Explicit release handles temporary descriptor inheritance during Git/Node probes.
-    let result = check_record(&path, node, npm_cli, &bytes, &mut report);
-    FileExt::unlock(&lock).context("destination_unlock_failed")?;
-    result?;
+    if !has_lock {
+        bail!("destination_lock_missing");
+    }
+    check_record(path, node, npm_cli, &bytes, &mut report)?;
     if fs::read(record_path)? != bytes {
         bail!("restoration_record_changed_during_status");
     }

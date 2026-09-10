@@ -785,3 +785,44 @@ fn status_detects_runtime_drift_from_a_valid_historical_receipt() {
         &json!(["/runtime/node/version"])
     );
 }
+
+#[test]
+fn status_reports_busy_before_absent_or_untracked() {
+    use fs2::FileExt;
+    let (_temp, root) = scratch();
+    let pkg = package(&root);
+    let lock = fs::File::create(root.join(".nmpool.lock")).unwrap();
+    lock.lock_exclusive().unwrap();
+    for installed in [false, true] {
+        if installed {
+            fs::create_dir(root.join("node_modules")).unwrap();
+        }
+        let output = status_cli(&pkg.path);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("destination_busy"));
+    }
+    FileExt::unlock(&lock).unwrap();
+    assert_eq!(status_cli(&pkg.path).status.code(), Some(2));
+}
+
+#[test]
+fn census_skips_case_variant_dependency_trees_and_records_missing_lock() {
+    let (_temp, root) = scratch();
+    package(&root);
+    git(&root, &["init"]);
+    package(&root.join("Node_Modules/dependency"));
+    fs::remove_file(root.join("package-lock.json")).unwrap();
+    let report = census::run(&[root], 4).unwrap();
+    assert!(report.complete_within_scope, "{:?}", report.errors);
+    assert_eq!(report.rows.len(), 1);
+    assert!(
+        report
+            .rows
+            .first()
+            .unwrap()
+            .unsupported_reason
+            .as_ref()
+            .unwrap()
+            .starts_with("input_read: package-lock.json")
+    );
+}

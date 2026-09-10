@@ -135,7 +135,8 @@ fn scan_dir(
             "coverage",
             ".cache",
         ]
-        .contains(&name)
+        .iter()
+        .any(|excluded| name.eq_ignore_ascii_case(excluded))
         {
             continue;
         }
@@ -219,6 +220,11 @@ fn make_row(tree: &Path, path: &Path, installs: &mut Vec<Handle>) -> Result<Row>
         }
         Err(e) => {
             let reason = format!("{e:#}");
+            // The I/O cause, not its formatted prefix, distinguishes a missing
+            // lockfile from a failed reread of an existing input.
+            let missing_lock = reason.starts_with("input_read: package-lock.json")
+                && e.downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound);
             let expected = [
                 "workspace_unsupported",
                 "lifecycle_scripts_unsupported",
@@ -231,9 +237,8 @@ fn make_row(tree: &Path, path: &Path, installs: &mut Vec<Handle>) -> Result<Row>
                 "resolved_url_required",
                 "integrity_required",
                 "npmrc_unsupported",
-                "input_read: package-lock.json",
             ];
-            if !expected.iter().any(|prefix| reason.starts_with(prefix)) {
+            if !missing_lock && !expected.iter().any(|prefix| reason.starts_with(prefix)) {
                 return Err(e);
             }
             row.unsupported_reason = Some(reason);

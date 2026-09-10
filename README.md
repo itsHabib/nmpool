@@ -7,9 +7,8 @@ replaced or deleted. Every restored worktree gets its own writable files.
 
 ## Start here
 
-**Experimental, draft PR #1; main is only the bootstrap.** Native macOS/Windows
-checks pass, but independent review and real Windows-workload acceptance remain
-open. The small Ivy trial restored in 1.189 s versus 0.425 s for warm npm ci:
+**Experimental.** Native macOS/Windows checks run on every PR. Real Windows-workload
+acceptance remains open. The small Ivy trial restored in 1.189 s versus 0.425 s for warm npm ci:
 performance benefit is not established.
 
 For a work machine, follow the [Windows installation and trial guide](docs/work-trial.md).
@@ -78,7 +77,7 @@ Requires Rust 1.89+ and Git. Prepare/restore also require native Node and npm.
 ```sh
 gh repo clone itsHabib/nmpool
 cd nmpool
-gh pr checkout 1
+gh pr checkout 1 # Only while implementation PR #1 is still open.
 cargo install --path . --locked
 python scripts/check.py
 ```

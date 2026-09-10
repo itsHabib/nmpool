@@ -6,16 +6,22 @@ still need this trial. The small Mac/Ivy trial was slower than warm npm ci.
 
 ## Get the implementation
 
-The repository is private, so authenticate GitHub CLI with an account that can
-read `itsHabib/nmpool`. PR #1 is unmerged: **cloning main alone is not enough**.
+Authenticate GitHub CLI with an account that can read `itsHabib/nmpool`.
+While PR #1 is open, check out that PR; after it merges, use main.
 In a directory where a new `nmpool` checkout can be created, use PowerShell:
 
 ```powershell
 gh repo clone itsHabib/nmpool nmpool
 if ($LASTEXITCODE -ne 0) { throw 'Clone failed' }
 Set-Location nmpool
-gh pr checkout 1
-if ($LASTEXITCODE -ne 0) { throw 'PR checkout failed' }
+$prState = gh pr view 1 --json state --jq .state
+if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve implementation PR state' }
+if ($prState -eq 'OPEN') {
+    gh pr checkout 1
+    if ($LASTEXITCODE -ne 0) { throw 'PR checkout failed' }
+} elseif ($prState -ne 'MERGED') {
+    throw 'Implementation PR closed without merging; inspect before continuing'
+}
 git rev-parse HEAD  # Record this revision with your results.
 cargo install --path . --locked
 if ($LASTEXITCODE -ne 0) { throw 'Build/install failed' }
@@ -34,6 +40,23 @@ Alternatively, download the `nmpool-Windows-X64` artifact from a successful
 `$nmpool` to that executable's full path. This avoids installing Rust. Record the
 run's commit; artifacts expire after 14 days and are not a signed release or an
 installer. The Windows artifact targets x64; native Windows ARM64 is untested.
+
+## Quick smoke test before choosing a work package
+
+From the nmpool source checkout, with Python 3 and native Node/npm installed:
+
+```powershell
+python scripts/smoke.py --binary $nmpool
+if ($LASTEXITCODE -ne 0) { throw 'Smoke test failed; see printed evidence path' }
+```
+
+This uses an empty dependency fixture in a new temporary directory: no downloads,
+work repository, credentials or live install are needed. It checks prepare, restore,
+clean status, refusal to overwrite, consumer drift and unchanged cache integrity.
+Both native CI runners execute the same script. It retains `results.json` and the
+fixture at the printed path on success or failure; delete only that disposable
+trial directory when you are finished. This is a mechanics test, not a performance
+benchmark or evidence that a private-registry monorepo is supported.
 
 ## First check whether the package is supported
 

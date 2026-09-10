@@ -51,7 +51,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Smoke test failed; see printed evidence path' 
 ```
 
 This uses an empty dependency fixture in a new temporary directory: no downloads,
-repository, credentials or live install are needed. It checks prepare, restore,
+project repository, credentials or live install are needed. It checks prepare, restore,
 clean status, refusal to overwrite, consumer drift and unchanged cache integrity.
 Both native CI runners execute the same script. It retains `results.json` and the
 fixture at the printed path on success or failure; delete only that disposable

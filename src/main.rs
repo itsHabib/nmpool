@@ -145,10 +145,12 @@ fn run(cli: Cli) -> Result<u8> {
             let package = Package::read(&package)?;
             let against = Package::read(&against)?;
             let tools = Toolchain::discover(&runtime.node, runtime.npm_cli.as_deref())?;
-            let other = Toolchain::discover(
-                against_node.as_deref().unwrap_or(&runtime.node),
-                against_npm_cli.as_deref().or(runtime.npm_cli.as_deref()),
-            )?;
+            let mut other_npm = against_npm_cli.as_deref();
+            if against_node.is_none() && other_npm.is_none() {
+                other_npm = runtime.npm_cli.as_deref();
+            }
+            let other =
+                Toolchain::discover(against_node.as_deref().unwrap_or(&runtime.node), other_npm)?;
             let report = nmpool::state::explain(&package, &against, &tools, &other)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(0)

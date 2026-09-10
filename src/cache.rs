@@ -59,17 +59,24 @@ impl Cache {
         // that blocks every later restore.
         // Compared case-insensitively: macOS and Windows volumes fold case, so
         // `Node_Modules` aliases the install directory there.
-        if absolute.components().any(|c| {
-            c.as_os_str()
-                .to_str()
-                .is_some_and(|s| s.eq_ignore_ascii_case("node_modules"))
-        }) {
-            bail!("cache_is_node_modules");
+        reject_install_path(&absolute)?;
+        // Windows short-name aliases may hide node_modules in the supplied
+        // spelling. Resolve the nearest existing ancestor before creating paths.
+        for ancestor in absolute.ancestors() {
+            match dunce::canonicalize(ancestor) {
+                Ok(existing) => {
+                    reject_install_path(&existing)?;
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                Err(e) => return Err(e).context("cache_ancestor_read"),
+            }
         }
         if !absolute.exists() {
             platform::private_dir(&absolute)?;
         }
         let root = dunce::canonicalize(absolute)?;
+        reject_install_path(&root)?;
         let marker = root.join(".nmpool-cache");
         platform::plain_path(&marker)?;
         let initializing = match fs::read(&marker) {
@@ -262,6 +269,17 @@ pub fn inspect(root: &Path, key: &str) -> Result<Receipt> {
     let lock = File::open(root.join(".lock")).context("cache_not_initialized")?;
     FileExt::try_lock_shared(&lock).context("cache_busy")?;
     read_entry(&root, key)
+}
+
+fn reject_install_path(path: &Path) -> Result<()> {
+    if path.components().any(|c| {
+        c.as_os_str()
+            .to_str()
+            .is_some_and(|s| s.eq_ignore_ascii_case("node_modules"))
+    }) {
+        bail!("cache_is_node_modules");
+    }
+    Ok(())
 }
 
 fn transfer_method(operation: &str, cache_hit: bool) -> &'static str {

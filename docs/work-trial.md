@@ -58,6 +58,10 @@ fixture at the printed path on success or failure; delete only that disposable
 trial directory when you are finished. This is a mechanics test, not a performance
 benchmark or evidence that a private-registry monorepo is supported.
 
+For the trial, use an ordinary local directory. OneDrive placeholders and other
+reparse points are refused with `link_or_reparse_path`; hydration/sync status does
+not override that boundary. Do not disable the guard to accept a synced path.
+
 ## First check whether the package is supported
 
 ```powershell

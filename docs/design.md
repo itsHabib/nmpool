@@ -17,7 +17,9 @@ OS-required variables and Node's directory on PATH, explicit empty user/global
 configs and a staging-local npm download cache. Scripts, audit and funding are
 disabled; dev/optional/peer dependencies are included. npm's version, distribution
 tree hash, Node executable hash, runtime/architecture/OS identity and full fixed
-recipe and effective file/directory creation permissions enter the key. No install commands run in a live source package. Tests/builds are
+recipe and temporary-file permission probes enter the key (Unix mode bits;
+Windows readonly flags, not ACL identity). These probes do not establish permission
+equivalence across volumes. No install commands run in a live source package. Tests/builds are
 the consumer's responsibility; the receipt is not a claim of application correctness.
 
 Roxiq's Sentry/esbuild/etc. install scripts are not yet supported. Ivy MCP is the
@@ -29,7 +31,10 @@ are separate future work.
 
 Each explicit cache root must be new/empty or carry our version marker. A kernel
 file lock serializes cache mutation and inspection, without a lease expiration or
-PID-based stale-lock override. Entry directories are keyed by a validated lowercase
+PID-based stale-lock override. Concurrent first-time initialization can refuse
+with `cache_not_empty_or_incomplete` or an already-existing marker: no unsafe
+retry, deletion or adoption is implied. This is a known first-use liveness limit.
+Entry directories are keyed by a validated lowercase
 64-character hex digest. Receipt contents are never used as filesystem paths.
 
 An entry is visible only after its manifest and receipt have been written. Native
@@ -64,7 +69,11 @@ mutate its private install after restore, but it is never recaptured implicitly.
 
 The census runs only Git enumeration and filesystem reads. It deduplicates physical
 worktrees/package/install identities and preserves repeated-enumeration counts.
-Package traversal is bounded and does not follow directory links. Its JSON separates
+Package traversal is bounded and does not follow directory links. Completeness
+is within the configured depth and built-in exclusions: node_modules, .git,
+.claude, .codex, .next, dist, build, target, vendor, .venv, venv, coverage and
+.cache (case-insensitive). Packages under these excluded names are not inventoried;
+a complete report is not a whole-filesystem census. Its JSON separates
 candidate input groups from a reuse key (always null during census). Partial scans
 exit 2. Unsupported install profiles are reported per row; missing worktree/read
 errors are never interpreted as zero references or permission to delete.

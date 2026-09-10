@@ -51,7 +51,7 @@ unproven. Keep the PR experimental. No merge or GC is authorized by these result
 ## Remaining release work
 
 - No independent review has been submitted on PR #1. CI is not a bug-free claim.
-- Run the [Windows work trial](work-trial.md) against a supported real package.
+- Run the [Windows trial](windows-trial.md) against a supported real package.
 - Coverage and mutation workflows are configured but have not been run.
 - Main branch protection is not configured. Merge remains operator-controlled.
 - Script/workspace/private-registry support requires a separate design; it is not

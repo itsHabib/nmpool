@@ -1,7 +1,7 @@
-# Try nmpool on a Windows work machine
+# Try nmpool on a Windows machine
 
 This is a standalone, experimental tool. Start with a disposable worktree of one
-package. Native Windows CI passes; actual work-machine compatibility and benefit
+package. Native Windows CI passes; real-machine compatibility and benefit
 still need this trial. The small Mac/Ivy trial was slower than warm npm ci.
 
 ## Get the implementation
@@ -230,5 +230,5 @@ Five restore seconds / median:
 Verdict: useful / slower / unsupported / inconclusive
 ```
 
-Keep source, credentials and private package details on the work machine. This
+Keep source, credentials and private package details on that machine. This
 result needs only the necessary timings, versions and sanitized failure reason.

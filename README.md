@@ -11,7 +11,9 @@ replaced or deleted. Every restored worktree gets its own writable files.
 acceptance remains open. The small Ivy trial restored in 1.189 s versus 0.425 s for warm npm ci:
 performance benefit is not established.
 
-For a work machine, follow the [Windows installation and trial guide](docs/work-trial.md).
+On a Windows machine, follow the [Windows installation and trial guide](docs/windows-trial.md).
+Why copy mode is not the end of the story, and what comes next, is in
+[docs/direction.md](docs/direction.md).
 It covers the PR checkout, binary alternative, compatibility check, disposable
 worktrees, correctness checks, timing, troubleshooting and cleanup.
 

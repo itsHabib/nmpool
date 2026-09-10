@@ -56,6 +56,11 @@ pub const UNSUPPORTED_REASONS: &[&str] = &[
     "resolved_url_required",
     "integrity_required",
     "npmrc_unsupported",
+    // Structural refusals of the inputs themselves: inventoried as unsupported,
+    // not propagated as incomplete reads.
+    "invalid_package_manifest",
+    "lock_packages_missing",
+    "lock_root_missing",
 ];
 
 /// Whether an error from `Package::read` classifies the package as unsupported
@@ -412,9 +417,26 @@ fn resolve_executable(path: &Path) -> Result<PathBuf> {
     bail!("node_not_found");
 }
 
+/// A supplied entry point must be npm's own `bin/npm-cli.js`. The runtime identity
+/// fingerprints the npm tree two levels above the entry point, so any other file
+/// under that tree would share a key with the real CLI while running different
+/// code; validating the fixed relative path keeps the entry point part of the key.
+fn checked_npm_cli(path: &Path) -> Result<PathBuf> {
+    let real = dunce::canonicalize(path)?;
+    let is_cli = real.file_name().is_some_and(|n| n == "npm-cli.js");
+    let in_bin = real
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|n| n == "bin");
+    if !is_cli || !in_bin {
+        bail!("npm_cli_unsupported: expected <npm>/bin/npm-cli.js");
+    }
+    Ok(real)
+}
+
 fn find_npm(node: &Path, supplied: Option<&Path>) -> Result<PathBuf> {
     if let Some(path) = supplied {
-        return Ok(dunce::canonicalize(path)?);
+        return checked_npm_cli(path);
     }
     let parent = node.parent().context("node_parent_missing")?;
     let mut candidates = vec![
@@ -431,7 +453,7 @@ fn find_npm(node: &Path, supplied: Option<&Path>) -> Result<PathBuf> {
     }
     for path in candidates {
         if path.is_file() {
-            return Ok(dunce::canonicalize(path)?);
+            return checked_npm_cli(&path);
         }
     }
     bail!("npm_cli_not_found: supply --npm-cli /path/to/npm/bin/npm-cli.js");

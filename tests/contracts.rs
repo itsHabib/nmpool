@@ -707,6 +707,27 @@ fn prepare_refuses_when_the_cache_entry_cannot_be_inspected() {
 }
 
 #[test]
+fn a_supplied_npm_entry_point_must_be_npms_own_cli() {
+    let (_temp, root) = scratch();
+    let bogus = root.join("npm-cli.js");
+    fs::write(&bogus, b"process.exit(0)").unwrap();
+    let node = tools().node.clone();
+    let err = Toolchain::discover(&node, Some(&bogus))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(err.contains("npm_cli_unsupported"), "{err}");
+    let elsewhere = root.join("lib").join("cli.js");
+    fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
+    fs::write(&elsewhere, b"process.exit(0)").unwrap();
+    let err = Toolchain::discover(&node, Some(&elsewhere))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(err.contains("npm_cli_unsupported"), "{err}");
+}
+
+#[test]
 fn status_never_adopts_and_refuses_corrupt_records() {
     let (_temp, root) = scratch();
     let pkg = package(&root.join("package"));

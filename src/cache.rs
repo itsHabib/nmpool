@@ -257,6 +257,10 @@ fn read_entry(root: &Path, key: &str) -> Result<Receipt> {
 /// well-formed receipt is not reported as a cache entry of unknown provenance.
 pub fn inspect(root: &Path, key: &str) -> Result<Receipt> {
     let root = platform::absolute(root)?;
+    platform::plain_path(&root)?;
+    reject_install_path(&root)?;
+    let root = dunce::canonicalize(root).context("cache_not_initialized")?;
+    reject_install_path(&root)?;
     let marker = root.join(".nmpool-cache");
     platform::plain_path(&marker)?;
     match fs::read(&marker) {

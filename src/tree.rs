@@ -44,18 +44,7 @@ fn walk(root: &Path, current: &Path, entries: &mut Vec<Entry>) -> Result<()> {
         let path = item?.path();
         let meta = fs::symlink_metadata(&path)?;
         let relative = path.strip_prefix(root)?;
-        let mut components = Vec::new();
-        for component in relative.components() {
-            let text = component
-                .as_os_str()
-                .to_str()
-                .context("non_utf8_artifact_path")?;
-            if text.contains(['\\', ':']) {
-                bail!("unsupported_artifact_name");
-            }
-            components.push(text);
-        }
-        let name = components.join("/");
+        let name = artifact_name(relative)?;
         let mut entry = Entry {
             path: name,
             kind: "file".into(),
@@ -147,4 +136,19 @@ fn copy_walk(source: &Path, destination: &Path) -> Result<()> {
         platform::copy_file(&from, &to)?;
     }
     Ok(())
+}
+
+fn artifact_name(relative: &Path) -> Result<String> {
+    let mut components = Vec::new();
+    for component in relative.components() {
+        let text = component
+            .as_os_str()
+            .to_str()
+            .context("non_utf8_artifact_path")?;
+        if text.contains(['\\', ':']) {
+            bail!("unsupported_artifact_name");
+        }
+        components.push(text);
+    }
+    Ok(components.join("/"))
 }

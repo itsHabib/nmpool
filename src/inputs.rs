@@ -125,13 +125,11 @@ fn reject_workspace(path: &Path) -> Result<()> {
                 Err(e) => return Err(e).context("workspace_scan"),
             }
         }
-        match fs::read(ancestor.join("package.json")) {
+        let manifest = ancestor.join("package.json");
+        platform::plain_path(&manifest)?;
+        match fs::read(manifest) {
             Ok(bytes) => {
-                let manifest: Value =
-                    serde_json::from_slice(&bytes).context("ancestor_manifest")?;
-                if manifest.get("workspaces").is_some() {
-                    bail!("workspace_unsupported");
-                }
+                reject_workspace_manifest(&bytes)?;
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
             Err(e) => return Err(e).context("ancestor_manifest"),
@@ -199,13 +197,7 @@ fn validate_lock(lock: &Value) -> Result<()> {
             .get("resolved")
             .and_then(Value::as_str)
             .context("resolved_url_required")?;
-        if !url.starts_with("https://registry.npmjs.org/") || url.contains(['?', '#', '@']) {
-            // Scoped packages legitimately contain @ after the host, so validate
-            // those below without permitting credentials or other hosts.
-            if !url.starts_with("https://registry.npmjs.org/@") || url.contains(['?', '#']) {
-                bail!("registry_unsupported: {name}");
-            }
-        }
+        validate_registry_url(url, name)?;
         let integrity = package
             .get("integrity")
             .and_then(Value::as_str)
@@ -217,18 +209,21 @@ fn validate_lock(lock: &Value) -> Result<()> {
     Ok(())
 }
 
+#[allow(
+    clippy::manual_let_else,
+    reason = "Operator requires no else syntax, including let-else"
+)]
 fn parse_npmrc(bytes: Option<&Vec<u8>>) -> Result<bool> {
-    let Some(bytes) = bytes else {
-        return Ok(false);
+    let bytes = match bytes {
+        Some(bytes) => bytes,
+        None => return Ok(false),
     };
     let mut value = None;
     for line in std::str::from_utf8(bytes)?.lines().map(str::trim) {
         if line.is_empty() || line.starts_with(['#', ';']) {
             continue;
         }
-        let Some((key, setting)) = line.split_once('=') else {
-            bail!("npmrc_unsupported");
-        };
+        let (key, setting) = line.split_once('=').context("npmrc_unsupported")?;
         if key.trim() != "legacy-peer-deps" || value.is_some() {
             bail!("npmrc_unsupported");
         }
@@ -413,4 +408,23 @@ fn find_npm(node: &Path, supplied: Option<&Path>) -> Result<PathBuf> {
         }
     }
     bail!("npm_cli_not_found: supply --npm-cli /path/to/npm/bin/npm-cli.js");
+}
+
+fn reject_workspace_manifest(bytes: &[u8]) -> Result<()> {
+    let manifest: Value = serde_json::from_slice(bytes).context("ancestor_manifest")?;
+    if manifest.get("workspaces").is_some() {
+        bail!("workspace_unsupported");
+    }
+    Ok(())
+}
+
+fn validate_registry_url(url: &str, name: &str) -> Result<()> {
+    if !url.starts_with("https://registry.npmjs.org/") || url.contains(['?', '#', '@']) {
+        // Scoped packages legitimately contain @ after the host, so validate
+        // those below without permitting credentials or other hosts.
+        if !url.starts_with("https://registry.npmjs.org/@") || url.contains(['?', '#']) {
+            bail!("registry_unsupported: {name}");
+        }
+    }
+    Ok(())
 }

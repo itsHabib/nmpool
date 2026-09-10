@@ -282,21 +282,30 @@ fn diff_fields(prefix: &str, before: &Value, after: &Value, result: &mut Vec<Str
         return;
     }
     if let (Some(old), Some(new)) = (before.as_object(), after.as_object()) {
-        let keys: BTreeSet<_> = old.keys().chain(new.keys()).collect();
-        for key in keys {
-            let field = format!("{prefix}/{key}");
-            if !old.contains_key(key) || !new.contains_key(key) {
-                result.push(field);
-                continue;
-            }
-            diff_fields(
-                &field,
-                old.get(key).unwrap_or(&Value::Null),
-                new.get(key).unwrap_or(&Value::Null),
-                result,
-            );
-        }
+        diff_object(prefix, old, new, result);
         return;
     }
     result.push(prefix.into());
+}
+
+fn diff_object(
+    prefix: &str,
+    old: &serde_json::Map<String, Value>,
+    new: &serde_json::Map<String, Value>,
+    result: &mut Vec<String>,
+) {
+    let keys: BTreeSet<_> = old.keys().chain(new.keys()).collect();
+    for key in keys {
+        let field = format!("{prefix}/{key}");
+        if !old.contains_key(key) || !new.contains_key(key) {
+            result.push(field);
+            continue;
+        }
+        diff_fields(
+            &field,
+            old.get(key).unwrap_or(&Value::Null),
+            new.get(key).unwrap_or(&Value::Null),
+            result,
+        );
+    }
 }

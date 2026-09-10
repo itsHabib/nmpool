@@ -50,27 +50,41 @@ pub fn run(roots: &[PathBuf], max_depth: usize) -> Result<Census> {
     let mut seen_packages = HashSet::new();
     let mut installs = Vec::new();
     for root in roots {
-        match worktrees(root) {
-            Ok(trees) => {
-                for tree in trees {
-                    if let Err(e) = scan_tree(
-                        &tree,
-                        max_depth,
-                        &mut seen_trees,
-                        &mut seen_packages,
-                        &mut installs,
-                        &mut report,
-                    ) {
-                        report.errors.push(format!("{}: {e:#}", tree.display()));
-                    }
-                }
+        let trees = match worktrees(root) {
+            Ok(trees) => trees,
+            Err(e) => {
+                report.errors.push(format!("{}: {e:#}", root.display()));
+                continue;
             }
-            Err(e) => report.errors.push(format!("{}: {e:#}", root.display())),
-        }
+        };
+        scan_trees(
+            &trees,
+            max_depth,
+            &mut seen_trees,
+            &mut seen_packages,
+            &mut installs,
+            &mut report,
+        );
     }
+
     report.complete_within_scope = report.errors.is_empty();
     report.rows.sort_by(|a, b| a.package.cmp(&b.package));
     Ok(report)
+}
+
+fn scan_trees(
+    trees: &[PathBuf],
+    depth: usize,
+    seen_trees: &mut HashSet<Handle>,
+    seen_packages: &mut HashSet<Handle>,
+    installs: &mut Vec<Handle>,
+    report: &mut Census,
+) {
+    for tree in trees {
+        if let Err(e) = scan_tree(tree, depth, seen_trees, seen_packages, installs, report) {
+            report.errors.push(format!("{}: {e:#}", tree.display()));
+        }
+    }
 }
 
 fn scan_tree(
@@ -90,6 +104,11 @@ fn scan_tree(
     scan_dir(&tree, &tree, depth, seen_packages, installs, report)
 }
 
+#[allow(
+    clippy::manual_let_else,
+    clippy::single_match_else,
+    reason = "Operator requires no else syntax, including let-else"
+)]
 fn scan_dir(
     tree: &Path,
     path: &Path,
@@ -116,9 +135,12 @@ fn scan_dir(
     for item in fs::read_dir(path)? {
         let item = item?;
         let name = item.file_name();
-        let Some(name) = name.to_str() else {
-            report.errors.push("non_utf8_directory_skipped".into());
-            continue;
+        let name = match name.to_str() {
+            Some(name) => name,
+            None => {
+                report.errors.push("non_utf8_directory_skipped".into());
+                continue;
+            }
         };
         if [
             "node_modules",
@@ -192,10 +214,7 @@ fn make_row(tree: &Path, path: &Path, installs: &mut Vec<Handle>) -> Result<Row>
                     let index = installs
                         .iter()
                         .position(|h| *h == handle)
-                        .unwrap_or_else(|| {
-                            installs.push(handle);
-                            installs.len() - 1
-                        });
+                        .unwrap_or_else(|| add_install(installs, handle));
                     row.install_identity_group = Some(index);
                     row.target = Some(dunce::canonicalize(&nm)?);
                 }
@@ -245,6 +264,11 @@ fn make_row(tree: &Path, path: &Path, installs: &mut Vec<Handle>) -> Result<Row>
         }
     }
     Ok(row)
+}
+
+fn add_install(installs: &mut Vec<Handle>, handle: Handle) -> usize {
+    installs.push(handle);
+    installs.len() - 1
 }
 
 fn worktrees(root: &Path) -> Result<Vec<PathBuf>> {

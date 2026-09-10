@@ -24,7 +24,14 @@ Read README.md and docs/design.md before changing behavior.
 Early returns, small functions, explicit errors, minimal dependencies. No daemon or
 plugin framework. Do not generalize beyond a measured consumer.
 
-Lint groups, restrictions and complexity thresholds match Dossier/Rooms. Every
+Keep Clippy all/pedantic/nursery/cargo and the selective restriction lints enabled.
+Cognitive complexity must be <= 10. Rust source and tests must have no `else`
+(including let-else) and at most two nested block scopes inside each function or
+method, with the function body at depth zero. `tests/style.rs` parses source before
+cfg filtering, so Windows-only code is checked on Mac too. Comments and literals
+are not code. Refactor violations; do not suppress complexity or nesting checks.
+The shared `python scripts/check.py` command enforces these rules in native CI.
+Every
 local lint exception needs a reason; do not disable a lint globally to clear one
 finding. Keep panic/unwrap exceptions confined to tests and stdout to the CLI.
 Coverage and mutation workflows are optional, manually dispatched audits.

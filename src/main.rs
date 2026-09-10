@@ -107,33 +107,14 @@ fn run(cli: Cli) -> Result<u8> {
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             }
-            if !json {
-                for row in &report.rows {
-                    println!(
-                        "{}\t{}\t{}",
-                        row.install_state,
-                        row.package.display(),
-                        row.unsupported_reason
-                            .as_deref()
-                            .unwrap_or("candidate; provenance unverified")
-                    );
-                }
-                for error in &report.errors {
-                    eprintln!("scan-error: {error}");
-                }
-                println!(
-                    "{} package paths; {} repeated worktree enumerations; physical savings unknown",
-                    report.rows.len(),
-                    report.duplicate_worktree_enumerations
-                );
-            }
-            Ok(if report.complete_within_scope { 0 } else { 2 })
+            print_census(&report, json);
+            Ok(result_code(report.complete_within_scope))
         }
         Commands::Status { package, runtime } => {
             let report =
                 nmpool::state::status(&package, &runtime.node, runtime.npm_cli.as_deref())?;
             println!("{}", serde_json::to_string_pretty(&report)?);
-            Ok(if report.state == "clean" { 0 } else { 2 })
+            Ok(result_code(report.state == "clean"))
         }
         Commands::Explain {
             package,
@@ -170,12 +151,50 @@ fn install(args: &Install, restore: bool) -> Result<u8> {
     let package = Package::read(&args.package)?;
     let tools = Toolchain::discover(&args.runtime.node, args.runtime.npm_cli.as_deref())?;
     let cache = Cache::open(&args.cache)?;
-    let mut outcome = if restore {
-        cache.restore(&package, &tools)?
-    } else {
-        cache.prepare(&package, &tools)?
-    };
+    let mut outcome = install_outcome(&cache, &package, &tools, restore)?;
     outcome.elapsed_ms = started.elapsed().as_millis();
     println!("{}", serde_json::to_string_pretty(&outcome)?);
     Ok(0)
+}
+
+const fn result_code(clean: bool) -> u8 {
+    if clean {
+        return 0;
+    }
+    2
+}
+
+fn print_census(report: &census::Census, json: bool) {
+    if !json {
+        for row in &report.rows {
+            println!(
+                "{}\t{}\t{}",
+                row.install_state,
+                row.package.display(),
+                row.unsupported_reason
+                    .as_deref()
+                    .unwrap_or("candidate; provenance unverified")
+            );
+        }
+        for error in &report.errors {
+            eprintln!("scan-error: {error}");
+        }
+        println!(
+            "{} package paths; {} repeated worktree enumerations; physical savings unknown",
+            report.rows.len(),
+            report.duplicate_worktree_enumerations
+        );
+    }
+}
+
+fn install_outcome(
+    cache: &Cache,
+    package: &Package,
+    tools: &Toolchain,
+    restore: bool,
+) -> Result<nmpool::cache::Outcome> {
+    if restore {
+        return cache.restore(package, tools);
+    }
+    cache.prepare(package, tools)
 }

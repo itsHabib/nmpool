@@ -18,3 +18,19 @@
 - Addressed current Codex findings: status locks before absent/untracked reports, census skips case-variant generated directories, and only a typed NotFound qualifies a missing lock as unsupported.
 
 - Local Claude review of 913a316 identified a Windows short-name cache alias gap and ambiguous `explain --against-node` npm fallback; both addressed. Permission probes and census exclusions are now described precisely. Concurrent first cache initialization can still fail closed with a misleading incomplete-cache/AlreadyExists error; tracked as a liveness limitation, never permission to delete or adopt. Mutable CI action refs are existing policy debt; no new required-check or toolchain pinning policy is imposed in this trial patch.
+
+## 2026-09-09 — Enforce operator strict style
+
+The inherited limits allowed cognitive complexity 20 and did not enforce the
+operator's nesting/no-else preferences. Set Clippy cognitive complexity to 10;
+added syntax-aware source/tests checks for two nested scopes inside each function
+and no else tokens, with negative fixtures and Windows cfg coverage. Refactored
+violations rather than suppressing nesting/complexity. Clippy's own excessive
+nesting counter includes function/impl containers, so the source parser defines
+the intended function-relative boundary. Only conflicting let-else suggestions
+have documented local exceptions. Existing lint groups, strict warnings, audit,
+formatting and docs checks remain enabled.
+
+Final Codex review of the prior head also identified unchecked linked ancestor
+manifests and inspect accepting a cache under node_modules. Added both guards and
+regressions while refactoring the touched code.

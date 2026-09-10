@@ -91,8 +91,12 @@ rights are required for the baseline. Both platforms build their own cache entri
 and warning-free documentation checks used by native CI. Use Python 3 (`python3`
 on Macs without a `python` alias); Make is an optional convenience. Clippy enables
 all, pedantic, nursery and cargo groups plus explicit panic, unwrap, indexing and
-debug-output restrictions. Complexity limits match Dossier/Rooms (20 cognitive,
-100 lines, six arguments). Scoped exceptions carry reasons.
+debug-output restrictions. Cognitive complexity is capped at 10; functions retain the 100-line and
+six-argument limits. A syntax-aware test enforces nesting <= 2 inside each Rust
+function/method and bans `else` (including let-else) in source and tests, including
+Windows-only code. Negative fixtures verify the style checker rejects violations.
+Scoped exceptions carry reasons; the few Clippy suggestions that require else
+syntax are locally waived to honor the no-else rule.
 
 Every PR also checks the declared Rust 1.89 minimum and runs `cargo audit --deny
 warnings` with no advisory ignores. Install `cargo-audit` to run `make audit`

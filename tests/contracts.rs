@@ -636,31 +636,7 @@ fn status_tracks_restore_and_separates_input_and_file_drift_without_cache() {
             {"path":"fixture.js", "change":"modified"}
         ])
     );
-    fs::write(pkg.path.join(".npmrc"), b"legacy-peer-deps=true").unwrap();
-    let changed = status_cli(&pkg.path);
-    assert_eq!(changed.status.code(), Some(2));
-    let changed: serde_json::Value = serde_json::from_slice(&changed.stdout).unwrap();
-    assert_ne!(changed.get("requested_key"), changed.get("recorded_key"));
-    assert!(
-        changed
-            .get("input_differences")
-            .unwrap()
-            .as_array()
-            .unwrap()
-            .contains(&json!("/inputs/files/.npmrc"))
-    );
-    fs::write(pkg.path.join(".npmrc"), b"registry=https://example.com").unwrap();
-    let unsupported = status_cli(&pkg.path);
-    assert_eq!(unsupported.status.code(), Some(2));
-    let unsupported: serde_json::Value = serde_json::from_slice(&unsupported.stdout).unwrap();
-    assert!(
-        unsupported
-            .get("input_error")
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .contains("npmrc_unsupported")
-    );
+    assert_status_input_drift(&pkg);
 }
 
 #[test]
@@ -825,4 +801,58 @@ fn census_skips_case_variant_dependency_trees_and_records_missing_lock() {
             .unwrap()
             .starts_with("input_read: package-lock.json")
     );
+}
+
+fn assert_status_input_drift(pkg: &Package) {
+    fs::write(pkg.path.join(".npmrc"), b"legacy-peer-deps=true").unwrap();
+    let changed = status_cli(&pkg.path);
+    assert_eq!(changed.status.code(), Some(2));
+    let changed: serde_json::Value = serde_json::from_slice(&changed.stdout).unwrap();
+    assert_ne!(changed.get("requested_key"), changed.get("recorded_key"));
+    assert!(
+        changed
+            .get("input_differences")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .contains(&json!("/inputs/files/.npmrc"))
+    );
+    fs::write(pkg.path.join(".npmrc"), b"registry=https://example.com").unwrap();
+    let unsupported = status_cli(&pkg.path);
+    assert_eq!(unsupported.status.code(), Some(2));
+    let unsupported: serde_json::Value = serde_json::from_slice(&unsupported.stdout).unwrap();
+    assert!(
+        unsupported
+            .get("input_error")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .contains("npmrc_unsupported")
+    );
+}
+
+#[test]
+fn inspection_refuses_cache_moved_inside_install_tree() {
+    let (_temp, root) = scratch();
+    let pkg = package(&root.join("package"));
+    let cache = Cache::open(&root.join("cache")).unwrap();
+    let receipt = seed(&cache, &pkg);
+    drop(cache);
+    fs::create_dir(root.join("Node_Modules")).unwrap();
+    let moved = root.join("Node_Modules/cache");
+    fs::rename(root.join("cache"), &moved).unwrap();
+    let error = inspect(&moved, &receipt.key).unwrap_err();
+    assert!(format!("{error:#}").contains("cache_is_node_modules"));
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_ancestor_manifest_is_refused() {
+    let (_temp, root) = scratch();
+    let child = root.join("child");
+    package(&child);
+    fs::write(root.join("external.json"), b"{}").unwrap();
+    std::os::unix::fs::symlink(root.join("external.json"), root.join("package.json")).unwrap();
+    let error = Package::read(&child).unwrap_err();
+    assert!(format!("{error:#}").contains("link_or_reparse_path"));
 }

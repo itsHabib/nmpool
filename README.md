@@ -49,6 +49,6 @@ see [validation](docs/validation.md) for results.
 
 - **[Agent onboarding](docs/agent-onboarding.md)** — paste-ready prompt, workflow and code map.
 - [Command reference](docs/commands.md) — receipts, exit codes and detailed behavior.
-- [Design](docs/design.md) · [Future direction](docs/direction.md) · [Changelog](CHANGELOG.md)
+- [Design](docs/design.md) · [Changelog](CHANGELOG.md)
 
 [MIT License](LICENSE) © 2026 Michael Habib.

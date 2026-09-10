@@ -45,9 +45,7 @@ by preparation. Runs alternated warm install and restore in one disposable workt
 about 2.8 times slower than warm npm ci. Do not deploy broadly or remove integrity
 checks on the strength of this trial. Roxiq install scripts remain unsupported;
 end-to-end Windows-laptop performance and ReFS acceleration remain unproven.
-Later component measurements and unsupported-profile findings are recorded in
-[direction.md](direction.md). Keep the release experimental. These trial results
-do not authorize GC.
+Keep the release experimental. These trial results do not authorize GC.
 
 
 ## Remaining release work

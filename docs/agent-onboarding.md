@@ -85,7 +85,7 @@ and install recipe; a successful restore alone is functional evidence.
 
 Read [AGENTS.md](../AGENTS.md), [design.md](design.md), and the relevant command
 reference first. Work in an isolated worktree and preserve the private-copy
-contract. [direction.md](direction.md) describes proposals, not implemented verbs.
+contract.
 
 | File | Responsibility |
 |---|---|

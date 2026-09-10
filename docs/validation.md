@@ -44,13 +44,17 @@ by preparation. Runs alternated warm install and restore in one disposable workt
 **The speed hypothesis failed for this small consumer.** Verified restoration was
 about 2.8 times slower than warm npm ci. Do not deploy broadly or remove integrity
 checks on the strength of this trial. Roxiq install scripts remain unsupported;
-actual Windows-laptop performance, ReFS acceleration and independent review remain
-unproven. Keep the PR experimental. No merge or GC is authorized by these results.
+end-to-end Windows-laptop performance and ReFS acceleration remain unproven.
+Later component measurements and unsupported-profile findings are recorded in
+[direction.md](direction.md). Keep the release experimental. These trial results
+do not authorize GC.
 
 
 ## Remaining release work
 
-- No independent review has been submitted on PR #1. CI is not a bug-free claim.
+- Implementation PR #1 and launch-prep PRs #2 and #3 have merged. Review evidence
+  belongs to their recorded heads; see the PR discussions and [review process](reviews.md).
+  CI is not a bug-free claim.
 - Run the [Windows trial](windows-trial.md) against a supported real package.
 - Coverage and mutation workflows are configured but have not been run.
 - Main branch protection is not configured. Merge remains operator-controlled.
@@ -67,3 +71,11 @@ SDK package manifest produced exit 2 and named that exact modified file; inspect
 of the cached seed still passed. The initial reduced snapshots omitted test fixture
 dependencies and failed until those source files were included. No live install
 was changed. This is functional evidence, not a new speed measurement.
+
+## Maintainer-reported work-agent run
+
+On 2026-09-10, the maintainer reported that an agent had run nmpool successfully
+in their work environment. This is an additional successful-use report beyond
+the recorded local fixtures and CI. The exact tool revision, package, commands,
+application test results and timings were not supplied with that report. It does
+not change the supported-input profile or establish a new performance result.

@@ -6,3 +6,11 @@
 /mutants.out/
 /mutants.out.old/
 /lcov.info
+
+# local secrets
+.env
+.env.*
+*.pem
+*.key
+credentials*
+secrets/

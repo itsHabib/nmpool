@@ -640,7 +640,7 @@ fn status_tracks_restore_and_separates_input_and_file_drift_without_cache() {
 }
 
 #[cfg(unix)]
-fn deny_all(path: &Path) -> Option<std::fs::Permissions> {
+fn deny_all(path: &Path) -> Option<fs::Permissions> {
     use std::os::unix::fs::PermissionsExt;
     if std::env::var_os("USER").is_some_and(|u| u == "root") {
         return None; // root reads through mode bits; nothing to test
@@ -652,6 +652,10 @@ fn deny_all(path: &Path) -> Option<std::fs::Permissions> {
 
 #[cfg(unix)]
 #[test]
+#[allow(
+    clippy::manual_let_else,
+    reason = "repository style forbids else tokens; a match is the line-of-sight form"
+)]
 fn status_fails_on_an_incomplete_input_read_instead_of_reporting_drift() {
     let (_temp, root) = scratch();
     let pkg = package(&root.join("package"));
@@ -676,6 +680,10 @@ fn status_fails_on_an_incomplete_input_read_instead_of_reporting_drift() {
 
 #[cfg(unix)]
 #[test]
+#[allow(
+    clippy::manual_let_else,
+    reason = "repository style forbids else tokens; a match is the line-of-sight form"
+)]
 fn prepare_refuses_when_the_cache_entry_cannot_be_inspected() {
     let (_temp, root) = scratch();
     let pkg = package(&root.join("package"));

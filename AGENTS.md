@@ -1,7 +1,8 @@
 # nmpool
 
 This is a personal Rust tool, independent of Fleet and of any employer implementation.
-Read README.md and docs/design.md before changing behavior.
+Start with [agent onboarding](docs/agent-onboarding.md) for the first-run workflow
+and code map. Read README.md and docs/design.md before changing behavior.
 
 ## Contract
 

@@ -71,3 +71,11 @@ SDK package manifest produced exit 2 and named that exact modified file; inspect
 of the cached seed still passed. The initial reduced snapshots omitted test fixture
 dependencies and failed until those source files were included. No live install
 was changed. This is functional evidence, not a new speed measurement.
+
+## Maintainer-reported work-agent run
+
+On 2026-09-10, the maintainer reported that an agent had run nmpool successfully
+in their work environment. This is an additional successful-use report beyond
+the recorded local fixtures and CI. The exact tool revision, package, commands,
+application test results and timings were not supplied with that report. It does
+not change the supported-input profile or establish a new performance result.

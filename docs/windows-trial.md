@@ -1,8 +1,9 @@
 # Try nmpool on a Windows machine
 
 This is a standalone, experimental tool. Start with a disposable worktree of one
-package. Native Windows CI passes; real-machine compatibility and benefit
-still need this trial. The small Mac/Ivy trial was slower than warm npm ci.
+package. Native Windows CI passes, and the maintainer has reported a successful
+work-agent run. Use this guide to check your package and record its results.
+The small Mac/Ivy trial was slower than warm npm ci.
 
 ## Get the implementation
 

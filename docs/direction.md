@@ -65,8 +65,8 @@ inputs enter it. They must be declared per island, never sniffed.
 ## Proposed shape: one key, one cache, two materialization modes
 
 The two problems differ on exactly one axis: whether the destination may share a
-writable tree with its siblings. The key, cache layout, receipt and drift reporting
-are common, so materialization becomes a strategy rather than a fork.
+tree with its siblings. The key, cache layout, receipt and drift reporting are
+common, so materialization becomes a strategy rather than a fork.
 
 ```text
 key   = H(profile_id, manifest, lock, allowed npmrc, runtime identity,
@@ -75,7 +75,7 @@ entry = cache/<key>/{ manifest.json, receipt.json, tree/ }
 
 materialize(entry, dest, mode):
     mode == copy  -> verified private copy        (today's behavior)
-    mode == share -> junction | symlink to entry  (new)
+    mode == share -> junction | symlink to entry  (new; contract change)
 ```
 
 - **copy** stays exactly as built and stays the default for small clean-profile
@@ -86,27 +86,58 @@ materialize(entry, dest, mode):
   scanning link targets, never by a counter, because counters go stale when git
   removes a worktree underneath the tool.
 
-Four things the design needs that the current tool refuses:
+### Share mode contradicts the current contract, on purpose
 
-1. **Generator inputs in the key**, declared per island. A correctness requirement,
-   not a feature.
-2. **Adoption, gated and explicit.** A machine with existing real installs must be
-   able to bootstrap: verify an existing tree against the key, hash it once, move
-   it into the cache, link the source back. It mutates, so it wants a dry run and
-   per-island opt-in.
-3. **Tiered verification.** Pay in full once, at prepare or adopt. Afterwards
-   `share` verifies the entry against its stored manifest digest and that the
-   destination is absent, without re-walking the tree. `status` goes cheap by
-   default with `--deep` for the full hash, keeping exit 2 for drift.
-4. **Profile gates as facts, not attacks.** What the design needs is that inputs
-   are enumerated and hashed as bytes and the install is reproduced by a recipe the
-   tool controls. It does not need the registry to be npmjs.org. For
-   integrity-less tarballs from a private registry, record the resolved URL plus a
-   digest computed at prepare time so the entry is self-verifying. Registry
+[AGENTS.md](../AGENTS.md) says every restored install is private and forbids
+consumer-to-cache links. That rule is a copy-mode invariant and share mode breaks
+it by definition. The contract therefore has to change before share mode is code:
+the amended rule would be that a *shared* entry is immutable, and that any
+consumer needing a writable `node_modules` gets copy mode. Until that amendment is
+reviewed and merged, the current contract stands and this section is a proposal,
+not a plan.
+
+### Constraints share mode must satisfy
+
+1. **Shared entries are immutable, enforced, not assumed.** Verifying an entry
+   against its stored manifest digest is only sound if the tree cannot have
+   changed since the digest was taken. A junction is writable from every linked
+   worktree, so the entry tree must be made read-only at publish (permission bits
+   on Unix, a read-only ACL on Windows), and `share` must confirm that state
+   before linking. A cheap check (metadata walk plus permission state) runs on
+   every `share`; a full content hash runs on `--deep` and on adopt. If a
+   consumer mutates the tree anyway, the next `--deep` reports drift on the
+   entry, and the entry is quarantined for every linked worktree, not repaired.
+2. **Adoption needs provenance, not consent.** Hashing an existing tree only
+   fingerprints whatever is there; the key holds inputs, not an expected
+   artifact fingerprint, so a stale or half-installed tree would be canonized
+   under a key it does not belong to. Adoption therefore compares the existing
+   tree against an independently produced manifest for the same key: either an
+   entry the tool already built, or one it builds now with `prepare`, paying the
+   install once. A tree that matches is swapped in and linked; a tree that does
+   not is left alone and reported. Dry run and per-island opt-in remain, as
+   consent on top of that comparison, never instead of it.
+3. **Generator inputs enter the key**, declared per island. A correctness
+   requirement, not a feature.
+4. **Tiered verification.** Pay in full once, at prepare or adopt. Afterwards
+   `share` runs the cheap check above without re-walking content, and `status`
+   goes cheap by default with `--deep` for the full hash, keeping exit 2 for
+   drift.
+5. **Profile gates as facts, not attacks.** What the design needs is that inputs
+   are enumerated and hashed as bytes and the install is reproduced by a recipe
+   the tool controls. It does not need the registry to be npmjs.org. Registry
    credentials come from the environment, never from a captured npmrc.
+   Integrity-less tarballs are the unresolved case: the same resolved URL can
+   serve different bytes later, and a key computed from the lockfile alone would
+   select the old entry before seeing the new bytes. Recording the digest at
+   prepare time makes the entry self-verifying but does not make the key
+   correct. The honest options are to keep refusing those artifacts, or to
+   finalize the key only after fetching (a two-phase key, which costs a network
+   round trip per reuse decision). The tool keeps refusing until that cost is
+   measured on the consumer.
 
 ## What this means for the merged tool
 
 The copy-mode implementation, its safety contract (never adopt, link, replace or
-delete an existing install) and its tests stay. Share mode is the next design, and
-it should be a reviewed document before it is code. Rust stays.
+delete an existing install) and its tests stay as they are. Share mode is the next
+design; it needs a reviewed contract amendment and a reviewed design document
+before it is code. Rust stays.

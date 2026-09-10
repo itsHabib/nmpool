@@ -182,7 +182,15 @@ fn check_record(
             );
             package.unchanged()?;
         }
-        Err(e) => report.input_error = Some(format!("{e:#}")),
+        Err(e) => {
+            // Only a package outside the profile is input drift. A read that did
+            // not complete (permission, I/O) is a verification failure: propagate.
+            let reason = format!("{e:#}");
+            if !crate::inputs::is_unsupported(&reason) {
+                return Err(e).context("input_read");
+            }
+            report.input_error = Some(reason);
+        }
     }
     let mut actual = tree::manifest(&path.join("node_modules"))?;
     actual.retain(|entry| entry.path != RECORD_NAME);

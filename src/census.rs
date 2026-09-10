@@ -244,20 +244,7 @@ fn make_row(tree: &Path, path: &Path, installs: &mut Vec<Handle>) -> Result<Row>
             let missing_lock = reason.starts_with("input_read: package-lock.json")
                 && e.downcast_ref::<std::io::Error>()
                     .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound);
-            let expected = [
-                "workspace_unsupported",
-                "lifecycle_scripts_unsupported",
-                "package_manager_unsupported",
-                "unsupported_lockfile",
-                "lockfile_v3_required",
-                "local_dependency_unsupported",
-                "registry_unsupported",
-                "sha512_integrity_required",
-                "resolved_url_required",
-                "integrity_required",
-                "npmrc_unsupported",
-            ];
-            if !missing_lock && !expected.iter().any(|prefix| reason.starts_with(prefix)) {
+            if !missing_lock && !crate::inputs::is_unsupported(&reason) {
                 return Err(e);
             }
             row.unsupported_reason = Some(reason);

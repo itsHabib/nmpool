@@ -639,6 +639,65 @@ fn status_tracks_restore_and_separates_input_and_file_drift_without_cache() {
     assert_status_input_drift(&pkg);
 }
 
+#[cfg(unix)]
+fn deny_all(path: &Path) -> Option<std::fs::Permissions> {
+    use std::os::unix::fs::PermissionsExt;
+    if std::env::var_os("USER").is_some_and(|u| u == "root") {
+        return None; // root reads through mode bits; nothing to test
+    }
+    let original = fs::metadata(path).unwrap().permissions();
+    fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
+    Some(original)
+}
+
+#[cfg(unix)]
+#[test]
+fn status_fails_on_an_incomplete_input_read_instead_of_reporting_drift() {
+    let (_temp, root) = scratch();
+    let pkg = package(&root.join("package"));
+    let cache = Cache::open(&root.join("cache")).unwrap();
+    seed(&cache, &pkg);
+    cache.restore(&pkg, tools()).unwrap();
+    let manifest = pkg.path.join("package.json");
+    let original = match deny_all(&manifest) {
+        Some(o) => o,
+        None => return,
+    };
+    let out = status_cli(&pkg.path);
+    fs::set_permissions(&manifest, original).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("input_read"));
+}
+
+#[cfg(unix)]
+#[test]
+fn prepare_refuses_when_the_cache_entry_cannot_be_inspected() {
+    let (_temp, root) = scratch();
+    let pkg = package(&root.join("package"));
+    let cache = Cache::open(&root.join("cache")).unwrap();
+    let entries = root.join("cache").join("entries");
+    let original = match deny_all(&entries) {
+        Some(o) => o,
+        None => return,
+    };
+    let err = cache.prepare(&pkg, tools()).err().map(|e| e.to_string());
+    fs::set_permissions(&entries, original).unwrap();
+    let err = err.unwrap();
+    assert!(err.contains("cache_entry_read"), "{err}");
+    assert_eq!(
+        fs::read_dir(root.join("cache").join("staging"))
+            .unwrap()
+            .count(),
+        0,
+        "staging was created for an uninspectable entry"
+    );
+}
+
 #[test]
 fn status_never_adopts_and_refuses_corrupt_records() {
     let (_temp, root) = scratch();

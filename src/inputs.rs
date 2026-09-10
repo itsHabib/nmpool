@@ -39,6 +39,33 @@ pub struct Package {
     pub contents: BTreeMap<String, Vec<u8>>,
 }
 
+/// Reasons that mean the package is outside the supported profile.
+///
+/// These are distinct from "the read did not complete". A census records the
+/// former and propagates the latter; `status` reports the former as input drift
+/// and fails on the latter.
+pub const UNSUPPORTED_REASONS: &[&str] = &[
+    "workspace_unsupported",
+    "lifecycle_scripts_unsupported",
+    "package_manager_unsupported",
+    "unsupported_lockfile",
+    "lockfile_v3_required",
+    "local_dependency_unsupported",
+    "registry_unsupported",
+    "sha512_integrity_required",
+    "resolved_url_required",
+    "integrity_required",
+    "npmrc_unsupported",
+];
+
+/// Whether an error from `Package::read` classifies the package as unsupported
+/// (as opposed to an incomplete read of its inputs).
+pub fn is_unsupported(reason: &str) -> bool {
+    UNSUPPORTED_REASONS
+        .iter()
+        .any(|prefix| reason.starts_with(prefix))
+}
+
 impl Package {
     pub fn read(path: &Path) -> Result<Self> {
         let path = platform::absolute(path)?;

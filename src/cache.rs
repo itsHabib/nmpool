@@ -117,11 +117,18 @@ impl Cache {
         let started = Instant::now();
         let key = toolchain.key(&package.inputs)?;
         let entry = self.root.join("entries").join(&key);
-        if fs::symlink_metadata(&entry).is_ok() {
-            let receipt = self.load(&key)?;
-            package.unchanged()?;
-            toolchain.unchanged()?;
-            return Ok(outcome("prepare", &receipt, true, started));
+        // Only a confirmed absence is a miss; an entry that cannot be inspected is
+        // an incomplete read, and preparing over it would retain staging and run
+        // npm for nothing.
+        match fs::symlink_metadata(&entry) {
+            Ok(_) => {
+                let receipt = self.load(&key)?;
+                package.unchanged()?;
+                toolchain.unchanged()?;
+                return Ok(outcome("prepare", &receipt, true, started));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).context("cache_entry_read"),
         }
         // Intentionally retain failed staging for inspection; there is no GC.
         let staging = tempfile::Builder::new()

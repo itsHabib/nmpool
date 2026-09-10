@@ -36,6 +36,7 @@ jobs:
         id: review_ref
         env:
           GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           PR_NUMBER: >-
             ${{
               (github.event_name == 'issue_comment' && github.event.issue.pull_request
@@ -47,7 +48,9 @@ jobs:
             }}
         run: |
           set -euo pipefail
-          ref="${GITHUB_REF}"
+          # Start from the trusted default branch, never from the event's own ref:
+          # for review events that ref is refs/pull/N/merge, which a fork controls.
+          ref="refs/heads/${DEFAULT_BRANCH}"
           if [ -n "${PR_NUMBER}" ]; then
             same_repo=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
               --jq '.head.repo.full_name == .base.repo.full_name')

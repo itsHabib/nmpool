@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Read-only `assess` reports sharing requirements together without executing npm.
+- `protection-probe` tests consumer write denial in a disposable native fixture;
+  live sharing and adoption remain unimplemented.
+
 - Copy-mode private install cache: `prepare`, `restore`, `status`, `inspect`,
   `explain`, `scan` (alias `census`).
 - Native macOS and Windows support; installs are never adopted, linked,

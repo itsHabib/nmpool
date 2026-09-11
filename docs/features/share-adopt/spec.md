@@ -250,10 +250,15 @@ codes such as `entry_missing`, `entry_corrupt`, `identity_changed`,
 input change, script failure or manifest mismatch retains staging and cannot
 produce a published entry. No-replace publication pins one artifact generation.
 
-**Attach:** lock cache then destination; read published receipt; check exact tree
-and target identities plus structural probes; write prepared transaction; build a
-link in private staging; publish only to an absent destination; record committed
-attachment. Existing untracked directories and unknown links are refused. Crash
+**Attach:** lock cache then destination; capture the destination policy, lock,
+generator closure and runtime and compute its current request key. Read the
+selected published receipt and require its request key to match. `--artifact`
+selects a generation within one request; it never overrides input compatibility.
+Check exact tree and target identities plus structural probes; write prepared
+transaction; build a link in private staging; recheck the captured inputs/runtime
+and destination identity immediately before publication. Refuse `request_mismatch`
+or `inputs_changed` rather than publishing on a mismatch. Publish only to an absent
+destination; record committed attachment. Existing untracked directories and unknown links are refused. Crash
 recovery reconciles the transaction with actual identities before retrying.
 
 **Replace an existing install:** explicit plan; full source manifest and provenance
@@ -337,7 +342,9 @@ contract when implementation is admitted, not in this design-only change.
 Native Windows tests must run on ordinary user permissions and exercise junctions,
 broken junctions, case/short-path aliases where supported, junction ancestors,
 held handles, destination creation races, source swaps, and interrupted transactions
-at every recorded transition. Compare full seed and retained manifests before and
+at every recorded transition. Mutate lock/schema/runtime after planning and during
+attach; require refusal, and reject an explicit artifact from another request key.
+Compare full seed and retained manifests before and
 after every attempted move, including refusals. Run native macOS copy regressions;
 symlink sharing has a separate native qualification if enabled.
 

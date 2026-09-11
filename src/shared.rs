@@ -85,7 +85,11 @@ impl Store {
         let package = staging.join("package");
         capture.stage(&package)?;
         capture.build(&package)?;
+        let built = tree::manifest(&package.join("node_modules"))?;
         capture.validate(&package)?;
+        if tree::manifest(&package.join("node_modules"))? != built {
+            bail!("validation_changed_dependency_contents");
+        }
         capture.ensure_unchanged()?;
         let artifact = self.publish(&package.join("node_modules"), capture, "controlled-build")?;
         remove_staging(&staging)?;
@@ -152,6 +156,7 @@ impl Store {
         let header: Header =
             serde_json::from_slice(&read_bounded(&artifact.join("header.json"), HEADER_LIMIT)?)?;
         if header.schema != SCHEMA
+            || !["controlled-build", "local-attestation"].contains(&header.origin.as_str())
             || header_id(&header)? != id
             || !header.nonempty
             || header.required_probes.is_empty()

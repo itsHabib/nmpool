@@ -1,13 +1,10 @@
 # nmpool
 
-Prepare npm dependencies once. Restore a verified, private `node_modules` into each Git worktree.
+Prepare npm dependencies once. Reuse `node_modules` across Git worktrees with
+protected shared generations or verified private copies.
 
 [![CI](https://github.com/itsHabib/nmpool/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/itsHabib/nmpool/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
-For developers and coding agents working across branches. Each worktree gets its
-own writable files in private-copy mode. Shared mode can replace an existing
-install only through an explicit plan that retains the original.
 
 ## Install
 
@@ -19,44 +16,41 @@ cd nmpool
 cargo install --path . --locked
 ```
 
-Not yet published on crates.io. See the [Windows guide](docs/windows-trial.md) for
-PowerShell instructions and binary downloads.
+Not published on crates.io. [Windows setup](docs/windows-trial.md).
 
-## Use
+## Share dependencies
 
-Replace these paths with your repository, package directories and a dedicated
-cache. The destination package must have no `node_modules`.
+Copy and edit [an island profile](examples/island.json) for your package's registry
+hosts, generator inputs, install/check commands and private runtime caches.
 
 ```sh
-nmpool scan --repo /path/to/repo --json
-nmpool prepare --package /path/to/repo/package --cache /path/to/cache
-nmpool restore --package /path/to/new-worktree/package --cache /path/to/cache
-nmpool status --package /path/to/new-worktree/package
+nmpool prepare --package /repo/web --cache /pool --profile /repo/island.json
+# Use artifact_id from the output; the destination must have no node_modules.
+nmpool link --package /worktree/web --cache /pool --profile /repo/island.json --artifact ARTIFACT_ID
+nmpool run --package /worktree/web --cache /pool --profile /repo/island.json --tool check
 ```
 
-Run your package's tests after restoring. Reuse the cache for matching package
-inputs and Node/npm versions on the same machine.
+Sharing supports npm lockfiles v2/v3, approved lifecycle scripts and declared HTTPS
+private registries. Dependencies stay protected; writable tool caches live in each
+consumer. Fast attachment checks are not a fresh full-content audit. Existing installs
+can be adopted and replaced through explicit plans that retain the original.
+See [shared installs, adoption and recovery](docs/live-sharing.md).
 
-## Supported scope
+## Private copies
 
-The intended tool supports private copies and shared `node_modules` across worktrees.
-Opt-in sharing, adoption and generator-aware installs are implemented on this
-experimental branch; see [shared installs](docs/live-sharing.md) for the explicit
-policy and commands. Native validation and review are required before release.
+For npm v3 lockfiles with integrity-pinned public dependencies and no lifecycle
+scripts or workspaces, omit the profile:
 
-Private-copy mode supports npm lockfile v3, integrity-pinned public registry dependencies, no install scripts
-or workspaces. Private registries, local/Git dependencies and custom npm configuration
-are unsupported, except project `legacy-peer-deps`.
+```sh
+nmpool prepare --package /repo/web --cache /pool
+nmpool restore --package /worktree/web --cache /pool
+```
 
-Working toward sharing? Run the [qualification checks](docs/sharing-trial.md).
+Each restored install has independent writable files. Existing installs are never
+overwritten. Run the application's tests after either workflow.
 
-Experimental and usable. No general speedup or disk savings are claimed;
-see [validation](docs/validation.md) for results.
-
-## Docs
-
-- **[Agent onboarding](docs/agent-onboarding.md)** — paste-ready prompt, workflow and code map.
-- [Command reference](docs/commands.md) — receipts, exit codes and detailed behavior.
-- [Design](docs/design.md) · [Changelog](CHANGELOG.md)
+Experimental. Real-workload correctness and performance need their own trial;
+see [validation](docs/validation.md). Start another agent with
+[agent onboarding](docs/agent-onboarding.md) or read the [command reference](docs/commands.md).
 
 [MIT License](LICENSE) © 2026 Michael Habib.

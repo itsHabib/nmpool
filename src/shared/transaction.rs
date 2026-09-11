@@ -266,6 +266,11 @@ impl Store {
             &serde_json::to_vec(&plan)?,
         )?;
         capture.ensure_unchanged()?;
+        if tree::fingerprint(&tree::manifest(&capture.package.join("node_modules"))?)?
+            != plan.source_manifest
+        {
+            bail!("source_changed");
+        }
         Self::set_pending(&capture.package, id)?;
         native::move_checked(
             &capture.package.join("node_modules"),

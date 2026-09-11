@@ -1,5 +1,23 @@
 # Command reference
 
+## Shared mode
+
+Use [shared installs](live-sharing.md) for full commands and the required island
+profile. `prepare --profile` publishes a shared generation; `restore` stays private.
+
+| Command | Purpose |
+|---|---|
+| `link` | Attach an explicit generation; `--plan` / `--plan-id` handle replacement. |
+| `adopt` | Plan and copy an existing install into a candidate without moving it. |
+| `qualify` | Validate the exact completed adoption candidate against its profile. |
+| `run` | Run an approved tool with consumer-private writable state. |
+| `shared-status` | Check the attachment and current inputs; exit 2 denotes an observation. |
+| `shared-inspect --full` | Fully verify an artifact and its bound provenance. |
+| `retained` | List originals retained by replacement transactions. |
+| `recover` | Preview recovery by default; only `--execute` performs it. |
+
+## Private-copy mode
+
 | Command | What it does | Changes |
 |---|---|---|
 | `scan` (alias of `census`) | Inventory Git worktrees and identify supported input candidates | None; no npm execution |

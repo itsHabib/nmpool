@@ -813,3 +813,26 @@ fn qualification_requires_its_completed_adoption_and_exact_receipt() {
     drop(store);
     restore_fixture(&root);
 }
+
+#[test]
+fn controlled_build_refuses_validation_that_changes_dependencies() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let mut value = policy();
+    *value.get_mut("validation_commands").unwrap() = json!([{"program":"node","args":["-e","require('fs').writeFileSync('node_modules/generated/index.js','changed by validation')"],"env":{}}]);
+    fs::write(&profile, serde_json::to_vec(&value).unwrap()).unwrap();
+    let captured = capture(&package, &profile);
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let error = store.prepare(&captured).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("validation_changed_dependency_contents")
+    );
+    assert_eq!(
+        fs::read_dir(store.root.join("artifacts")).unwrap().count(),
+        0
+    );
+    assert!(!package.join("node_modules").exists());
+}

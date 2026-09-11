@@ -24,6 +24,7 @@ pub struct Attachment {
     pub link_identity: native::Identity,
     pub runtime: PathBuf,
     pub verification: String,
+    pub last_full_audit: u64,
 }
 
 pub(super) struct DestinationLock(fs::File);
@@ -50,8 +51,8 @@ impl DestinationLock {
 impl Store {
     pub fn link(&self, capture: &Capture, artifact: &str) -> Result<Attachment> {
         self.reject_package(&capture.package)?;
-        self.ensure_no_pending(capture, None)?;
         let destination_lock = DestinationLock::acquire(&capture.package)?;
+        Self::ensure_no_pending(capture, None)?;
         let header = self.read(artifact, false)?;
         match_request(capture, &header)?;
         self.require_qualified(artifact, &header)?;
@@ -102,9 +103,11 @@ impl Store {
             link_identity: native::link_identity(&staging)?,
             runtime,
             verification: "structural; content not fully re-audited".into(),
+            last_full_audit: self.last_full_audit(artifact)?,
         };
         let bytes = serde_json::to_vec(&record)?;
         write_new(&transaction.join("prepared.json"), &bytes)?;
+        Self::set_pending(&capture.package, id)?;
         capture.ensure_unchanged()?;
         self.read(artifact, false)?;
         if native::identity(&capture.package)? != record.package_identity {
@@ -115,6 +118,7 @@ impl Store {
         native::verify_link(&capture.package.join("node_modules"), &target)?;
         write_new(&capture.package.join(RECORD), &bytes)?;
         write_new(&transaction.join("committed"), b"committed\n")?;
+        Self::clear_pending(&capture.package, id)?;
         Ok(record)
     }
 
@@ -123,7 +127,7 @@ impl Store {
         platform::plain_path(&package)?;
         let package = dunce::canonicalize(package)?;
         let _lock = DestinationLock::acquire(&package)?;
-        let record: Attachment =
+        let mut record: Attachment =
             serde_json::from_slice(&read_bounded(&package.join(RECORD), 65536)?)?;
         validate_id(&record.transaction_id)?;
         if record.schema != "nmpool/attachment/v1"
@@ -148,6 +152,7 @@ impl Store {
             bail!("attachment_identity_changed");
         }
         native::verify_link(&link, &self.artifact(&record.artifact_id)?.join("tree"))?;
+        record.last_full_audit = self.last_full_audit(&record.artifact_id)?;
         Ok(record)
     }
 
@@ -165,7 +170,7 @@ impl Store {
         let cache = self.cache.root.clone();
         drop(self);
         capture.run_runtime(&capture.package, tool, &runtime)?;
-        Self::open(&cache)?.attachment(&capture.package, false)
+        Self::open_for_runtime(&cache)?.attachment(&capture.package, false)
     }
 }
 

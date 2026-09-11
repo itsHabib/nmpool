@@ -57,10 +57,8 @@ enum Commands {
     },
     /// Report a shared attachment; structural status is not a clean-content claim.
     SharedStatus {
-        #[arg(long)]
-        package: PathBuf,
-        #[arg(long)]
-        cache: PathBuf,
+        #[command(flatten)]
+        args: SharedArgs,
         #[arg(long)]
         full: bool,
     },
@@ -203,18 +201,11 @@ fn run(cli: Cli) -> Result<u8> {
             println!("{}", serde_json::to_string_pretty(&header)?);
             Ok(0)
         }
-        Commands::SharedStatus {
-            package,
-            cache,
-            full,
-        } => {
-            let record = nmpool::shared::Store::open(&cache)?.attachment(&package, full)?;
-            println!("{}", serde_json::to_string_pretty(&record)?);
-            Ok(2)
-        }
+        Commands::SharedStatus { args, full } => shared_status(&args, full),
         Commands::Run { args, tool } => {
             let capture = shared_capture(&args)?;
-            let record = nmpool::shared::Store::open(&args.cache)?.run_tool(&capture, &tool)?;
+            let record =
+                nmpool::shared::Store::open_for_runtime(&args.cache)?.run_tool(&capture, &tool)?;
             println!("{}", serde_json::to_string_pretty(&record)?);
             Ok(0)
         }
@@ -409,4 +400,11 @@ fn shared_qualify(args: &SharedArgs) -> Result<u8> {
         nmpool::shared::Store::open(&args.cache)?.qualify(&capture, artifact_argument(args)?)?;
     println!("{}", serde_json::to_string_pretty(&header)?);
     Ok(0)
+}
+
+fn shared_status(args: &SharedArgs, full: bool) -> Result<u8> {
+    let capture = shared_capture(args)?;
+    let record = nmpool::shared::Store::open(&args.cache)?.status(&capture, full)?;
+    println!("{}", serde_json::to_string_pretty(&record)?);
+    Ok(2)
 }

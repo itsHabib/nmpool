@@ -160,6 +160,9 @@ impl Store {
         if quarantine.exists() {
             bail!("artifact_quarantined");
         }
+        if full {
+            self.record_audit(id)?;
+        }
         Ok(header)
     }
 }
@@ -329,5 +332,65 @@ fn require_present(path: &Path) -> Result<()> {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => bail!("artifact_missing"),
         Err(error) => Err(error.into()),
+    }
+}
+
+impl Store {
+    fn record_audit(&self, id: &str) -> Result<()> {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let directory = self.root.join("audit");
+        let temporary = tempfile::NamedTempFile::new_in(&directory)?;
+        temporary
+            .as_file()
+            .write_all(&serde_json::to_vec(&timestamp)?)?;
+        temporary.as_file().sync_all()?;
+        let destination = directory.join(format!("{id}.full-audit"));
+        platform::plain_path(&destination)?;
+        temporary
+            .persist(&destination)
+            .map_err(|error| error.error)?;
+        Ok(())
+    }
+
+    pub fn last_full_audit(&self, id: &str) -> Result<u64> {
+        validate_id(id)?;
+        Ok(serde_json::from_slice(&read_bounded(
+            &self.root.join("audit").join(format!("{id}.full-audit")),
+            64,
+        )?)?)
+    }
+
+    pub fn status(&self, capture: &Capture, full: bool) -> Result<Attachment> {
+        let mut record = self.attachment(&capture.package, full)?;
+        if record.request_key != capture.request_key {
+            bail!("request_mismatch");
+        }
+        capture.ensure_unchanged()?;
+        if full {
+            record.verification = "full-content observation; current inputs match".into();
+        }
+        Ok(record)
+    }
+}
+
+impl Store {
+    /// Runtime startup tolerates another short metadata operation holding the pool.
+    /// The existing lock is acquired normally; no stale-lock override is used.
+    pub fn open_for_runtime(cache: &Path) -> Result<Self> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let result = Self::open(cache);
+            if result
+                .as_ref()
+                .is_err_and(|error| error.to_string().starts_with("cache_busy:"))
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                continue;
+            }
+            return result;
+        }
     }
 }

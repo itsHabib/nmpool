@@ -140,11 +140,23 @@ fn two_consumers_share_one_protected_generation_with_private_runtime_files() {
         )
         .unwrap()
     );
-    store.run_tool(&capture_one, "check").unwrap();
-    nmpool::shared::Store::open(&cache)
-        .unwrap()
-        .run_tool(&capture_two, "check")
-        .unwrap();
+    drop(store);
+    std::thread::scope(|scope| {
+        let one = scope.spawn(|| {
+            nmpool::shared::Store::open_for_runtime(&cache)
+                .unwrap()
+                .run_tool(&capture_one, "check")
+                .unwrap()
+        });
+        let two = scope.spawn(|| {
+            nmpool::shared::Store::open_for_runtime(&cache)
+                .unwrap()
+                .run_tool(&capture_two, "check")
+                .unwrap()
+        });
+        one.join().unwrap();
+        two.join().unwrap();
+    });
     assert_ne!(one.runtime, two.runtime);
     assert_eq!(
         fs::read(one.runtime.join("check/output")).unwrap(),
@@ -261,6 +273,7 @@ fn interrupted_first_attachment_is_recoverable_without_changing_the_artifact() {
     let tree = store.artifact(&artifact).unwrap().join("tree");
     let before = nmpool::tree::manifest(&tree).unwrap();
     // Reproduce the durable state after link publication but before receipt/commit.
+    fs::write(package.join(".nmpool-pending"), &record.transaction_id).unwrap();
     fs::remove_file(package.join(".nmpool-shared.json")).unwrap();
     fs::remove_file(
         store

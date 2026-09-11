@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::{fs, io::Write, path::PathBuf};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -15,6 +15,9 @@ pub struct Plan {
     pub schema: String,
     pub id: String,
     pub operation: String,
+    pub created_at: Option<u64>,
+    pub git_commit: Option<String>,
+    pub git_branch: Option<String>,
     pub package: PathBuf,
     pub package_identity: native::Identity,
     pub source_identity: native::Identity,
@@ -39,7 +42,7 @@ impl Store {
 
     fn plan(&self, capture: &Capture, artifact: Option<&str>) -> Result<Plan> {
         self.reject_package(&capture.package)?;
-        self.ensure_no_pending(capture, None)?;
+        Self::ensure_no_pending(capture, None)?;
         platform::absent(&capture.package.join(RECORD))?;
         let source = capture.package.join("node_modules");
         let source_identity = native::identity(&source)?;
@@ -61,6 +64,13 @@ impl Store {
             schema: "nmpool/transaction/v1".into(),
             id: id.clone(),
             operation: operation.into(),
+            created_at: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs(),
+            ),
+            git_commit: git_value(&capture.package, &["rev-parse", "--verify", "HEAD"]),
+            git_branch: git_value(&capture.package, &["symbolic-ref", "--short", "HEAD"]),
             package: capture.package.clone(),
             package_identity: native::identity(&capture.package)?,
             source_identity,
@@ -92,7 +102,7 @@ impl Store {
     fn check_plan(&self, capture: &Capture, id: &str, operation: &str) -> Result<Plan> {
         let plan = self.load_plan(id)?;
         platform::absent(&capture.package.join(RECORD))?;
-        self.ensure_no_pending(capture, Some(id))?;
+        Self::ensure_no_pending(capture, Some(id))?;
         self.reject_package(&capture.package)?;
         if plan.operation != operation
             || plan.request_key != capture.request_key
@@ -209,6 +219,7 @@ impl Store {
             &serde_json::to_vec(&plan)?,
         )?;
         capture.ensure_unchanged()?;
+        Self::set_pending(&capture.package, id)?;
         native::move_checked(
             &capture.package.join("node_modules"),
             &retained.join("tree"),
@@ -237,6 +248,9 @@ impl Store {
             bail!("recovery_package_changed");
         }
         let source = self.root.join("retained").join(id).join("tree");
+        if !exists(&source)? {
+            return self.recover_original_present(plan, execute);
+        }
         if native::identity(&source)? != plan.source_identity
             || tree::fingerprint(&tree::manifest(&source)?)? != plan.source_manifest
         {
@@ -250,7 +264,30 @@ impl Store {
                 &self.root.join("transactions").join(id).join("recovered"),
                 b"recovered\n",
             )?;
+            Self::clear_pending(&plan.package, id)?;
         }
+        Ok(plan)
+    }
+
+    fn recover_original_present(&self, mut plan: Plan, execute: bool) -> Result<Plan> {
+        let original = plan.package.join("node_modules");
+        if native::identity(&original)? != plan.source_identity
+            || tree::fingerprint(&tree::manifest(&original)?)? != plan.source_manifest
+        {
+            bail!("retained_tree_missing_and_original_changed");
+        }
+        if execute {
+            let marker = self
+                .root
+                .join("transactions")
+                .join(&plan.id)
+                .join("recovered");
+            if !exists(&marker)? {
+                write_new(&marker, b"recovered\n")?;
+            }
+            Self::clear_pending(&plan.package, &plan.id)?;
+        }
+        plan.operation = "original-already-present".into();
         Ok(plan)
     }
 
@@ -322,7 +359,11 @@ impl Store {
             let entry = entry?;
             let name = entry.file_name();
             let id = name.to_str().context("retained_id_invalid")?;
-            plans.push(self.load_plan(id)?);
+            let mut plan = self.load_plan(id)?;
+            if exists(&self.root.join("transactions").join(id).join("recovered"))? {
+                plan.operation = "recovered".into();
+            }
+            plans.push(plan);
         }
         Ok(plans)
     }
@@ -338,37 +379,46 @@ fn exists(path: &std::path::Path) -> Result<bool> {
 }
 
 impl Store {
-    pub(super) fn ensure_no_pending(&self, capture: &Capture, except: Option<&str>) -> Result<()> {
-        let identity = native::identity(&capture.package)?;
-        for entry in fs::read_dir(self.root.join("transactions"))? {
-            let entry = entry?;
-            let name = entry.file_name();
-            let id = name.to_str().context("transaction_id_invalid")?;
-            if Some(id) == except {
-                continue;
-            }
-            self.check_pending(id, &identity)?;
+    pub(super) fn ensure_no_pending(capture: &Capture, except: Option<&str>) -> Result<()> {
+        let path = capture.package.join(".nmpool-pending");
+        if !exists(&path)? {
+            return Ok(());
+        }
+        let bytes = read_bounded(&path, 64)?;
+        let id = std::str::from_utf8(&bytes).context("pending_transaction_invalid")?;
+        validate_id(id)?;
+        if Some(id) != except {
+            bail!("transaction_incomplete: {id}");
         }
         Ok(())
     }
 
-    fn check_pending(&self, id: &str, package: &native::Identity) -> Result<()> {
-        let directory = self.root.join("transactions").join(id);
-        if exists(&directory.join("committed"))? || exists(&directory.join("recovered"))? {
+    pub(super) fn set_pending(package: &std::path::Path, id: &str) -> Result<()> {
+        let path = package.join(".nmpool-pending");
+        if exists(&path)? {
+            if read_bounded(&path, 64)? != id.as_bytes() {
+                bail!("another_transaction_pending");
+            }
             return Ok(());
         }
-        if exists(&directory.join("prepared.json"))? {
-            let record: Attachment =
-                serde_json::from_slice(&read_bounded(&directory.join("prepared.json"), 65536)?)?;
-            if record.package_identity == *package {
-                bail!("transaction_incomplete: {id}");
-            }
+        let mut temporary = tempfile::NamedTempFile::new_in(package)?;
+        temporary.write_all(id.as_bytes())?;
+        temporary.as_file().sync_all()?;
+        temporary
+            .persist_noclobber(&path)
+            .map_err(|error| error.error)?;
+        Ok(())
+    }
+
+    pub(super) fn clear_pending(package: &std::path::Path, id: &str) -> Result<()> {
+        let path = package.join(".nmpool-pending");
+        if !exists(&path)? {
+            return Ok(());
         }
-        if exists(&self.root.join("retained").join(id).join("tree"))?
-            && self.load_plan(id)?.package_identity == *package
-        {
-            bail!("transaction_incomplete: {id}");
+        if read_bounded(&path, 64)? != id.as_bytes() {
+            bail!("another_transaction_pending");
         }
+        fs::remove_file(path)?;
         Ok(())
     }
 
@@ -389,6 +439,9 @@ impl Store {
             schema: "nmpool/transaction/v1".into(),
             id: id.into(),
             operation: "remove-attachment".into(),
+            created_at: None,
+            git_commit: None,
+            git_branch: None,
             package: record.package.clone(),
             package_identity: record.package_identity.clone(),
             source_identity: record.link_identity.clone(),
@@ -403,6 +456,7 @@ impl Store {
             Err(error) => return Err(error.into()),
         }
         if execute {
+            Self::clear_pending(&plan.package, id)?;
             Self::remove_own_record(&plan, &record)?;
             if !exists(&directory.join("recovered"))? {
                 write_new(&directory.join("recovered"), b"recovered\n")?;
@@ -410,4 +464,18 @@ impl Store {
         }
         Ok(plan)
     }
+}
+
+fn git_value(package: &std::path::Path, arguments: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .current_dir(package)
+        .args(arguments)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()
+        .map(|value| value.trim().to_owned())
 }

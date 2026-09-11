@@ -33,7 +33,7 @@ nmpool prepare --package /repo/web --cache /pool --profile /repo/island.json
 # Copy artifact_id from the JSON output.
 nmpool link --package /other-worktree/web --cache /pool --profile /repo/island.json --artifact ARTIFACT_ID
 nmpool run --package /other-worktree/web --cache /pool --profile /repo/island.json --tool check
-nmpool shared-status --package /other-worktree/web --cache /pool
+nmpool shared-status --package /other-worktree/web --cache /pool --profile /repo/island.json
 nmpool shared-inspect --cache /pool --artifact ARTIFACT_ID --full
 ```
 

@@ -57,6 +57,9 @@ fn native_link(target: &Path, link: &Path) -> Result<()> {
 
 #[cfg(windows)]
 fn native_link(target: &Path, link: &Path) -> Result<()> {
+    let target = dunce::canonicalize(target)?;
+    let link = dunce::canonicalize(link.parent().context("link_parent_missing")?)?
+        .join(link.file_name().context("link_name_missing")?);
     let output = std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; New-Item -ItemType Junction -Path $env:NMP_LINK -Target $env:NMP_TARGET | Out-Null"])
         .env("NMP_LINK", link).env("NMP_TARGET", target).output()?;

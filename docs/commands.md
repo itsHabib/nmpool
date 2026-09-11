@@ -13,9 +13,10 @@
 or fall back to npm on a miss. `inspect` verifies the cache, not application tests.
 There is no automatic integration with Git worktree creation.
 
-On Windows, use absolute paths (`C:\repo\package`) or ordinary relative paths
-(`.\package`). Drive-relative forms such as `C:package` are refused because their
-meaning depends on hidden per-drive working-directory state.
+For `assess --package` and `protection-probe --parent` on Windows, use absolute
+paths (`C:\repo\package`) or ordinary relative paths (`.\package`). These arguments
+refuse drive-relative forms such as `C:package`, whose meaning depends on hidden
+per-drive working-directory state.
 
 ## Daily use
 

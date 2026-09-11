@@ -182,10 +182,14 @@ through the final native move and refuse unresolved alias or race behavior.
 
 A locally observed tree cannot prove that current lock/schema files produced it.
 Adoption therefore produces a **candidate**, with a full manifest and explicit
-local attestation. Promotion by controlled build requires the same request key and exact equality
-between the candidate full-manifest digest/artifact ID and the qualified build.
-A receipt for generation A cannot qualify candidate B merely because their
-request keys match. Test equal-request/different-artifact rejection explicitly.
+local attestation. Promotion by controlled build requires matching request/policy/runtime identity
+and exact equality of the **content-only tree-manifest digest**. Candidate and
+build artifact IDs may differ because provenance and physical probe identities
+differ. Qualification evidence names both artifact IDs and binds the comparison
+to the candidate's own unchanged content digest; never relabel its provenance.
+A receipt for generation A cannot qualify different bytes in candidate B merely
+because their request keys match. Test equal-request/different-content rejection
+and equal-content/different-provenance acceptance explicitly.
 The alternative is a reviewed adoption policy plus recorded application/generator
 validation bound to that exact candidate digest, with inputs unchanged throughout.
 Label the latter `locally-attested`; it is not silently equivalent to a fresh
@@ -218,8 +222,11 @@ New versioned records (schema validation rejects unknown major versions):
   `artifact_id` field itself, timestamps, paths, qualification references and
   mutable state are explicitly excluded; unknown identity fields require a schema
   revision. Mutable quarantine/audit state is recorded separately.
-- `ArtifactManifest`: separately stored complete file manifest and provenance
-  detail, read during publication/full audit rather than on fast attach. Full
+- `ArtifactManifest`: separately stored content-only tree manifest: sorted relative
+  paths, entry types, byte hashes/lengths, relevant modes and link targets. Exclude
+  origin, observation times, absolute paths, native file identities and qualification
+  evidence. Store provenance separately, bound to its own artifact ID. Read the
+  manifest during publication/full audit rather than on fast attach. Full
   verification checks its digest against the header; structural verification
   validates header identity and probes but does not claim to re-verify the full
   manifest or content. Manifest IDs never contain paths.

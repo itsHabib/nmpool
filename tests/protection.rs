@@ -63,17 +63,24 @@ fn retained_acl_matches_fresh_inheritance_instead_of_everyone_full_control() {
 
 #[cfg(windows)]
 fn acl_sddl(path: &std::path::Path) -> String {
+    let path = dunce::canonicalize(path).unwrap();
     let output = std::process::Command::new("powershell.exe")
         .args([
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            "$ErrorActionPreference='Stop'; (Get-Acl -LiteralPath $env:NMP_ACL_PATH).Sddl",
+            "$ErrorActionPreference='Stop'; [System.IO.File]::GetAccessControl($env:NMP_ACL_PATH).GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Access)",
         ])
         .env("NMP_ACL_PATH", path)
         .output()
         .unwrap();
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "ACL inspection failed: status={:?} stdout={} stderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 

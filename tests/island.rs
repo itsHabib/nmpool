@@ -123,6 +123,8 @@ fn two_consumers_share_one_protected_generation_with_private_runtime_files() {
     fs::create_dir(&second_root).unwrap();
     let (first, profile) = fixture(&first_root);
     let (second, second_profile) = fixture(&second_root);
+    overlapping_runtime_profile(&profile);
+    overlapping_runtime_profile(&second_profile);
     let capture_one = capture(&first, &profile);
     let capture_two = capture(&second, &second_profile);
     assert_eq!(capture_one.request_key, capture_two.request_key);
@@ -157,6 +159,7 @@ fn two_consumers_share_one_protected_generation_with_private_runtime_files() {
         one.join().unwrap();
         two.join().unwrap();
     });
+    assert_runtime_overlap(&one.runtime, &two.runtime);
     assert_ne!(one.runtime, two.runtime);
     assert_eq!(
         fs::read(one.runtime.join("check/output")).unwrap(),
@@ -392,4 +395,28 @@ fn cli(args: &[&str]) -> Value {
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn overlapping_runtime_profile(path: &Path) {
+    let mut value = policy();
+    let command = value
+        .get_mut("runtime_commands")
+        .unwrap()
+        .get_mut("check")
+        .unwrap();
+    *command.get_mut("args").unwrap() = json!([
+        "-e",
+        "const fs=require('fs'),p=process.argv[1],start=Date.now();setTimeout(()=>{fs.writeFileSync(p,'private');fs.writeFileSync(p+'.times',JSON.stringify([start,Date.now()]))},8000)",
+        "{runtime}/output"
+    ]);
+    fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+}
+
+fn assert_runtime_overlap(first: &Path, second: &Path) {
+    let first: Vec<u64> =
+        serde_json::from_slice(&fs::read(first.join("check/output.times")).unwrap()).unwrap();
+    let second: Vec<u64> =
+        serde_json::from_slice(&fs::read(second.join("check/output.times")).unwrap()).unwrap();
+    assert!(first.first().unwrap() < second.last().unwrap());
+    assert!(second.first().unwrap() < first.last().unwrap());
 }

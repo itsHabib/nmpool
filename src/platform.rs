@@ -1,5 +1,6 @@
 //! Native identity and copy boundaries. No consumer shares file identities with a seed.
 pub mod protection;
+pub mod shared;
 
 use anyhow::{Context, Result, bail};
 use std::{fs, path::Path};

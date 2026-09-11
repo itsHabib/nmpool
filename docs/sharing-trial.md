@@ -25,7 +25,7 @@ Keep source files and credentials on the machine where the package lives.
 
 Choose an existing ordinary directory on the volume that would hold the pool.
 The command creates its own disposable fixture there; it never protects that
-parent or any existing installation.
+parent or any existing installation. Parents inside `node_modules` are refused.
 
 ```powershell
 nmpool protection-probe --parent 'C:\nmpool-trials' > protection.json
@@ -40,8 +40,8 @@ operations; Windows readonly attributes alone are insufficient.
 A passing fixture establishes protection from ordinary accidental writes on that
 volume. The owning user can deliberately change permissions. It does not qualify
 an application, prove every production race safe or enable live sharing. Keep the
-reported fixture and results until reviewed; cleanup instructions are included in
-the report. Never recursively delete a live consumer link or shared target.
+reported fixture and results until reviewed. The report names failed operations
+and any permission-restoration errors; check `cleanup` before removing the fixture. Never recursively delete a live consumer link or shared target.
 
 ## Hand back evidence
 

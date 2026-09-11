@@ -66,7 +66,9 @@ from the requirements and sanitized reproductions.
 
 Failure of the speed target stops rollout pending investigation; correctness and
 safety failures block share regardless of speed. Do not exclude identity/config
-work or junction validation from timing.
+work or junction validation from timing. Current toolchain capture traverses the
+npm distribution and hashes the Node executable; include that cost. If it misses
+the latency target, do not replace it with an unverified mtime cache.
 
 ## 3. Architecture
 
@@ -199,9 +201,17 @@ New versioned records (schema validation rejects unknown major versions):
 - `IslandPolicy`: ID/version, package boundary, declared input paths, manager and
   recipe, registries/config allowlist, scripts/effects, runtime-write routing,
   qualification tests, permitted verification/protection modes.
-- `ArtifactReceipt`: request key, artifact ID/full manifest, policy hash, runtime,
-  generator input hashes, origin/upstream-integrity evidence, qualification
-  evidence references, state, last full audit. Manifest IDs never contain paths.
+- `ArtifactHeader`: bounded versioned attachment metadata: request/artifact IDs,
+  policy hash, runtime identity digest, full-manifest digest, nonempty/count summary,
+  at most 16 required probes, qualification references and origin. Cap serialized
+  headers at 64 KiB; reject oversize records. An artifact ID hashes immutable header
+  fields and the separate full-manifest digest; mutable quarantine/audit state is
+  recorded separately and never changes artifact identity.
+- `ArtifactManifest`: separately stored complete file manifest and provenance
+  detail, read during publication/full audit rather than on fast attach. Full
+  verification checks its digest against the header; structural verification
+  validates header identity and probes but does not claim to re-verify the full
+  manifest or content. Manifest IDs never contain paths.
 - `Attachment`: consumer UUID, package identity, artifact ID, native link identity
   and target, runtime-state location, transaction ID, verification tier.
 - `Transaction`: unique ID, operation, state, source/destination native identities,
@@ -296,7 +306,8 @@ hold data, never authorize cleanup. No PID-age stale-lock override.
 
 Full verification hashes every artifact at prepare/adopt, promotion and explicit
 audit. Share attach performs bounded structural checks: valid published receipt,
-root identity, directory existence, nonempty invariant when the manifest is nonempty,
+the bounded header identity, root identity, directory existence, nonempty invariant
+when the recorded manifest summary is nonempty,
 and required profile sentinels with recorded identities/hashes. Missing Prisma
 output or an emptied root must fail before publishing a link. Inspecting the same
 artifact from multiple consumers can reuse one audit result for that operation.

@@ -33,7 +33,9 @@ nmpool protection-probe --parent 'C:\nmpool-trials' > protection.json
 ```
 
 The probe attempts writes, creation, rename and deletion through a consumer link,
-and checks whether the artifact root can be removed from its parent. Reading must
+and attempts to rename the artifact root from its parent. A separate protected
+empty sibling tests parent-level deletion permission; the probe does not try to
+recursively delete the nonempty artifact. Reading must
 remain possible. Unix permission bits and Windows ACLs are tested by actual file
 operations; Windows readonly attributes alone are insufficient.
 

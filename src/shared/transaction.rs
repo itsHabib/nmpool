@@ -136,32 +136,62 @@ impl Store {
         let _lock = DestinationLock::acquire(&capture.package)?;
         let plan = self.check_plan(capture, id, "adopt")?;
         let transaction = self.root.join("transactions").join(id);
-        platform::absent(&transaction.join("candidate.json"))?;
+        if exists(&transaction.join("candidate.json"))? {
+            return self.resume_adoption(capture, &plan);
+        }
         let candidate = self.publish(
             &capture.package.join("node_modules"),
             capture,
             "locally-attested-candidate",
         )?;
         self.check_plan(capture, id, "adopt")?;
-        write_new(
-            &transaction.join("candidate.json"),
-            &serde_json::to_vec(&candidate.0)?,
-        )?;
         if plan.source_identity != native::identity(&capture.package.join("node_modules"))? {
             bail!("source_changed");
         }
         write_new(
-            &self
-                .root
-                .join("audit")
-                .join(format!("{}.adopted", candidate.0)),
-            &serde_json::to_vec(&plan.id)?,
+            &transaction.join("candidate.json"),
+            &serde_json::to_vec(&candidate.0)?,
         )?;
+        self.finish_adoption(&plan, &candidate.0)?;
         Ok(candidate)
     }
 
+    fn resume_adoption(&self, capture: &Capture, plan: &Plan) -> Result<(String, Header)> {
+        let transaction = self.root.join("transactions").join(&plan.id);
+        let artifact: String =
+            serde_json::from_slice(&read_bounded(&transaction.join("candidate.json"), 65536)?)?;
+        let header = self.read(&artifact, true)?;
+        match_request(capture, &header)?;
+        let mut manifest: Vec<tree::Entry> = serde_json::from_slice(&read_bounded(
+            &transaction.join("source-manifest.json"),
+            256 * 1024 * 1024,
+        )?)?;
+        if tree::fingerprint(&manifest)? != plan.source_manifest {
+            bail!("adoption_source_manifest_changed");
+        }
+        protected_modes(&mut manifest);
+        if tree::fingerprint(&manifest)? != header.manifest_digest {
+            bail!("adoption_candidate_mismatch");
+        }
+        capture.ensure_unchanged()?;
+        self.finish_adoption(plan, &artifact)?;
+        Ok((artifact, header))
+    }
+
+    fn finish_adoption(&self, plan: &Plan, artifact: &str) -> Result<()> {
+        let path = self.root.join("audit").join(format!("{artifact}.adopted"));
+        let bytes = serde_json::to_vec(&plan.id)?;
+        if exists(&path)? {
+            if read_bounded(&path, 65536)? != bytes {
+                bail!("adoption_candidate_mismatch");
+            }
+            return Ok(());
+        }
+        write_new(&path, &bytes)
+    }
+
     pub fn qualify(&self, capture: &Capture, artifact: &str) -> Result<Header> {
-        let header = self.read(artifact, true)?;
+        let mut header = self.read(artifact, true)?;
         match_request(capture, &header)?;
         self.require_adopted(artifact, &header)?;
         if !capture.policy.allow_local_attestation {
@@ -183,7 +213,7 @@ impl Store {
         capture.ensure_unchanged()?;
         self.read(artifact, true)?;
         self.record_qualification(artifact, &header)?;
-        super::remove_staging(&staging)?;
+        header.cleanup_warning = super::cleanup_warning(&staging);
         Ok(header)
     }
 
@@ -559,5 +589,18 @@ impl Store {
             bail!("transaction_marker_invalid");
         }
         Ok(true)
+    }
+}
+
+fn protected_modes(manifest: &mut [tree::Entry]) {
+    for entry in manifest {
+        #[cfg(unix)]
+        {
+            entry.mode &= !0o222;
+        }
+        #[cfg(windows)]
+        {
+            let _ = entry;
+        }
     }
 }

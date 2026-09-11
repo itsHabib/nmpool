@@ -394,9 +394,12 @@ fn shared_prepare(args: &Install, profile: &std::path::Path) -> Result<u8> {
         args.runtime.npm_cli.as_deref(),
     )?;
     let (artifact, header) = nmpool::shared::Store::open(&args.cache)?.prepare(&capture)?;
+    let cleanup_warning = header.cleanup_warning.clone();
     println!(
         "{}",
-        serde_json::to_string_pretty(&serde_json::json!({"artifact_id":artifact,"header":header}))?
+        serde_json::to_string_pretty(
+            &serde_json::json!({"artifact_id":artifact,"header":header,"cleanup_warning":cleanup_warning})
+        )?
     );
     Ok(0)
 }
@@ -406,7 +409,15 @@ fn shared_qualify(args: &SharedArgs) -> Result<u8> {
     let capture = shared_capture(args)?;
     let header =
         nmpool::shared::Store::open(&args.cache)?.qualify(&capture, artifact_argument(args)?)?;
-    println!("{}", serde_json::to_string_pretty(&header)?);
+    let mut result = serde_json::to_value(&header)?;
+    result
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("header_not_object"))?
+        .insert(
+            "cleanup_warning".into(),
+            serde_json::to_value(&header.cleanup_warning)?,
+        );
+    println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(0)
 }
 

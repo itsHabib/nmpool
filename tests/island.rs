@@ -792,6 +792,9 @@ fn qualification_requires_its_completed_adoption_and_exact_receipt() {
     let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
     let first = store.plan_adopt(&captured).unwrap();
     let (a, _) = store.adopt(&captured, &first.id).unwrap();
+    fs::remove_file(store.root.join("audit").join(format!("{a}.adopted"))).unwrap();
+    let resumed = store.adopt(&captured, &first.id).unwrap();
+    assert_eq!(resumed.0, a);
     store.qualify(&captured, &a).unwrap();
     fs::write(&generated, "module.exports='schema-v1'; // different bytes").unwrap();
     let second = store.plan_adopt(&captured).unwrap();
@@ -835,4 +838,37 @@ fn controlled_build_refuses_validation_that_changes_dependencies() {
         0
     );
     assert!(!package.join("node_modules").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn cleanup_failure_reports_the_successfully_published_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let mut value = policy();
+    *value.get_mut("validation_commands").unwrap() = json!([{"program":"node","args":["-e","const fs=require('fs');fs.mkdirSync('unreadable-cleanup-fixture');fs.chmodSync('unreadable-cleanup-fixture',0)"],"env":{}}]);
+    fs::write(&profile, serde_json::to_vec(&value).unwrap()).unwrap();
+    let cache = root.join("cache");
+    let report = cli(&[
+        "prepare",
+        "--package",
+        package.to_str().unwrap(),
+        "--cache",
+        cache.to_str().unwrap(),
+        "--profile",
+        profile.to_str().unwrap(),
+    ]);
+    assert!(report.get("cleanup_warning").unwrap().as_str().is_some());
+    let artifact = report.get("artifact_id").unwrap().as_str().unwrap();
+    let store = nmpool::shared::Store::open(&cache).unwrap();
+    assert!(
+        store
+            .read(artifact, true)
+            .unwrap()
+            .cleanup_warning
+            .is_none()
+    );
+    drop(store);
+    restore_fixture(&root);
 }

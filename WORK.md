@@ -50,3 +50,21 @@ handoff refresh. Actual work-laptop application acceptance/performance still nee
 its sanitized profile/commands and reports (issue #10); do not invent those results
 or let their absence stop portable implementation. Preserve original scope and keep
 the goal active until completion is proven.
+
+
+## Latest verification and outcome handling
+
+Native Windows run 34611281589 passed at be9ae1c, including destination ancestor
+guards, large provenance, candidate binding, sharing and recovery. Local Claude
+review of be9ae1c reconciled to no P1/P2 (the conditional SHA1 finding was disproved
+by capture validation and a public CLI refusal before cache creation). The fe84dbb
+validation/docs delta independently received no P1/P2 findings.
+
+Subsequent Cursor findings 3990293959/3990293972 are addressed by retrying the same
+recorded adoption candidate with full source/candidate checks and by reporting a
+cleanup_warning separately from successful publication/qualification. The adoption
+receipt-interruption regression and a real Unix permission-denied cleanup CLI test
+pass. Full local checks now pass with 94 tests, plus strict Windows cross-Clippy.
+Latest evidence: /private/tmp/nmpool-outcome-check2.log and
+/private/tmp/nmpool-outcome-windows.log. This outcome-handling revision still needs
+independent delta review and native CI before Gate/merge. No goal completion claimed.

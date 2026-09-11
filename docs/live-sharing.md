@@ -73,6 +73,8 @@ nmpool link --package /repo/web --cache /pool --profile /repo/island.json --plan
 ```
 
 Adoption copies and fully verifies a candidate, leaving the original untouched.
+Repeating the same adoption plan resumes its recorded candidate after rechecking
+the source, candidate and transaction; it does not silently select different bytes.
 Qualification runs the policy's checks on a separate copy and binds their success
 to the exact candidate content. This remains local attestation; it does not claim
 the lockfile produced an existing installation.
@@ -93,7 +95,9 @@ attachment, the displayed `remove-attachment` operation removes only that exact
 link and leaves the package without `node_modules`; it does not install a replacement. It only removes
 the transaction's own link and never overwrites a new ordinary install. There is
 no garbage collector. Retained records and failed build staging are deliberately kept;
-successful build and qualification copies are removed. An interrupted local link
+successful build and qualification copies are removed. If cleanup fails after a
+successful publication or qualification, the command still returns its successful
+result with `cleanup_warning`; inspect the named staging directory separately. An interrupted local link
 creation is recorded before the link exists: `recover` reports `remove-staging-link`
 when publication never reached its prepared record. It validates the private staging
 directory and intended target before removing only the link. Changed or unavailable

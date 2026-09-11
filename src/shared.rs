@@ -48,6 +48,9 @@ pub struct Header {
     pub bytes: u64,
     pub root_identity: native::Identity,
     pub required_probes: Vec<Probe>,
+    /// Operation-only diagnostic; excluded from persisted generation identity.
+    #[serde(skip)]
+    pub cleanup_warning: Option<String>,
 }
 
 pub struct Store {
@@ -91,8 +94,9 @@ impl Store {
             bail!("validation_changed_dependency_contents");
         }
         capture.ensure_unchanged()?;
-        let artifact = self.publish(&package.join("node_modules"), capture, "controlled-build")?;
-        remove_staging(&staging)?;
+        let mut artifact =
+            self.publish(&package.join("node_modules"), capture, "controlled-build")?;
+        artifact.1.cleanup_warning = cleanup_warning(&staging);
         Ok(artifact)
     }
 
@@ -208,6 +212,7 @@ fn make_header(
         bytes: manifest.iter().map(|entry| entry.bytes).sum(),
         root_identity: native::identity(root)?,
         required_probes: probes,
+        cleanup_warning: None,
     };
     if serde_json::to_vec(&header)?.len() > usize::try_from(HEADER_LIMIT)? {
         bail!("artifact_header_size");
@@ -450,4 +455,13 @@ fn writable_staging(path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn cleanup_warning(path: &Path) -> Option<String> {
+    remove_staging(path).err().map(|error| {
+        format!(
+            "Published result is usable; staging cleanup incomplete at {}: {error:#}",
+            path.display()
+        )
+    })
 }

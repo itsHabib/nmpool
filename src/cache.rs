@@ -247,9 +247,14 @@ fn read_entry(root: &Path, key: &str) -> Result<Receipt> {
     validate_key(key)?;
     let entry = root.join("entries").join(key);
     platform::plain_path(&entry.join("receipt.json"))?;
-    let receipt: Receipt = serde_json::from_slice(
-        &fs::read(entry.join("receipt.json")).context("cache_miss_or_incomplete")?,
-    )?;
+    let receipt: Receipt =
+        serde_json::from_slice(&fs::read(entry.join("receipt.json")).with_context(|| {
+            format!(
+                "cache_miss_or_incomplete: key={key} cache={} entry={}",
+                root.display(),
+                entry.display()
+            )
+        })?)?;
     validate_receipt(&receipt, key)?;
     if tree::manifest(&entry.join("node_modules"))? != receipt.entries {
         bail!("artifact_mismatch");

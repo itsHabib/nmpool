@@ -34,8 +34,10 @@ input differences. Unsupported current inputs appear in `input_error`. No receip
 means untracked, including installs from older nmpool builds; no adoption occurs.
 
 `explain` names differing input fields (for example `/inputs/files/package-lock.json`)
-and emits both keys. It compares raw file fingerprints, not individual dependency
-version changes. Branch names are context: different branches can request the same
+and emits both keys. It compares file fingerprints after JSON CRLF normalization, not individual
+dependency version changes. `input_file_details` explains line-ending-only changes
+even when keys match, and equivalent JSON representation changes when keys
+still differ. Other whitespace is intentionally significant. Branch names are context: different branches can request the same
 install. By default it compares both packages under the selected current Node/npm;
 use `--against-node` and `--against-npm-cli` to select a different second runtime.
 A successful comparison exits 0 even when requirements differ.

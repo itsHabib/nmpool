@@ -248,6 +248,7 @@ pub struct Explanation {
     pub package_key: String,
     pub against_key: String,
     pub differences: Vec<String>,
+    pub input_file_details: Vec<InputFileDetail>,
     pub package_git: GitContext,
     pub against_git: GitContext,
 }
@@ -269,6 +270,7 @@ pub fn explain(
             &serde_json::json!({"inputs": package.inputs, "runtime": tools.runtime}),
             &serde_json::json!({"inputs": against.inputs, "runtime": against_tools.runtime}),
         ),
+        input_file_details: input_file_details(package, against),
         package_git: git_context(&package.path),
         against_git: git_context(&against.path),
     };
@@ -316,4 +318,44 @@ fn diff_object(
             result,
         );
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct InputFileDetail {
+    pub path: String,
+    pub kind: String,
+    pub message: String,
+}
+
+fn input_file_details(package: &Package, against: &Package) -> Vec<InputFileDetail> {
+    ["package.json", "package-lock.json"]
+        .into_iter()
+        .filter_map(|name| input_file_detail(name, package, against))
+        .collect()
+}
+
+fn input_file_detail(name: &str, package: &Package, against: &Package) -> Option<InputFileDetail> {
+    let left = package.contents.get(name)?;
+    let right = against.contents.get(name)?;
+    if left == right {
+        return None;
+    }
+    if crate::inputs::keyed_bytes(name, left) == crate::inputs::keyed_bytes(name, right) {
+        return Some(InputFileDetail {
+            path: name.into(),
+            kind: "line_endings_only".into(),
+            message: "line endings only (CRLF/LF); normalized for cache identity".into(),
+        });
+    }
+    let left_json: Value = serde_json::from_slice(left).ok()?;
+    let right_json: Value = serde_json::from_slice(right).ok()?;
+    if left_json != right_json {
+        return None;
+    }
+    Some(InputFileDetail {
+        path: name.into(),
+        kind: "json_representation_only".into(),
+        message: "JSON values match; representation differs and remains part of cache identity"
+            .into(),
+    })
 }

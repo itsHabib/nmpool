@@ -1,4 +1,7 @@
 //! Explicit, reviewed npm island inputs and commands. Staging is not a sandbox.
+mod provenance;
+pub use provenance::Provenance;
+
 use crate::{digest, inputs, platform};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -32,6 +35,8 @@ pub struct Policy {
     pub independent_npm_island: bool,
     pub acknowledge_unsandboxed_scripts: bool,
     pub trust_domain: String,
+    #[serde(default)]
+    pub registry_hosts: Vec<String>,
     pub allow_local_attestation: bool,
     pub generator_inputs: Vec<String>,
     pub context_inputs: Vec<String>,
@@ -572,16 +577,7 @@ fn validate_dependency(name: &str, value: &Value, policy: &Policy) -> Result<()>
         .get("resolved")
         .and_then(Value::as_str)
         .context("island_resolved_missing")?;
-    if !resolved.starts_with("https://")
-        || resolved
-            .trim_start_matches("https://")
-            .split('/')
-            .next()
-            .is_some_and(|host| host.contains('@'))
-        || resolved.contains(['?', '#'])
-    {
-        bail!("island_registry_url");
-    }
+    provenance::admitted_registry(resolved, policy)?;
     let pinned = value
         .get("integrity")
         .and_then(Value::as_str)
@@ -612,7 +608,7 @@ fn validate_config_line(line: &str, policy: &Policy) -> Result<()> {
         return Ok(());
     }
     if key == "registry" || key.ends_with(":registry") {
-        return validate_config_registry(value);
+        return validate_config_registry(value, policy);
     }
     if key.ends_with(":_authToken") && declared_placeholder(value, &policy.credential_env) {
         return Ok(());
@@ -620,11 +616,11 @@ fn validate_config_line(line: &str, policy: &Policy) -> Result<()> {
     bail!("island_npmrc_setting");
 }
 
-fn validate_config_registry(value: &str) -> Result<()> {
+fn validate_config_registry(value: &str, policy: &Policy) -> Result<()> {
     if !value.starts_with("https://") || value.contains(['@', '?', '#', '$']) {
         bail!("island_registry_configuration");
     }
-    Ok(())
+    provenance::admitted_registry(value, policy)
 }
 
 fn declared_placeholder(value: &str, names: &[String]) -> bool {

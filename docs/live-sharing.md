@@ -15,7 +15,12 @@ List inherited workspace/config files such as `../pnpm-workspace.yaml` under
 
 The profile supports npm lockfile v2/v3, lifecycle scripts and HTTPS private
 registries. Missing upstream integrity needs `allow_local_attestation`; that
-records observed bytes, not publisher authenticity. An independent npm island is
+records observed bytes, not publisher authenticity. List every permitted HTTPS
+registry host (including any explicit port) in `registry_hosts`; both lockfile
+URLs and npmrc registries must match. `trust_domain` separately identifies the
+nonsecret authorization context. Each generation stores a protected, hash-bound
+`provenance.json` with observation time, source hosts and supplied upstream
+integrity. This detailed record is checked during full audits. An independent npm island is
 an explicit reviewed assertion, not something a pnpm parent proves. Linked/local
 workspace dependencies remain unsupported by this root-link strategy.
 
@@ -44,6 +49,10 @@ ordinary writes; an owner can deliberately change permissions. Each runtime tool
 gets a separate `.nmpool-runtime/<attachment>/<tool>` directory. `{runtime}` in
 approved arguments or environment values expands to that directory. A tool that
 cannot redirect writes outside `node_modules` is incompatible with this strategy.
+
+Pool-changing operations are serialized. `run` waits for the current pool operation
+(including a long prepare or full audit) at startup and its final check; cancel it
+with Ctrl-C if you do not want to wait. The pool lock is released while the tool runs.
 
 Fast results check bounded metadata, physical identity and required file probes.
 They are not fresh full-content verification. `shared-status` exits 2 for this

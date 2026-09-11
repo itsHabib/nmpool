@@ -20,7 +20,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const SCHEMA: &str = "nmpool/shared-artifact/v1";
+const SCHEMA: &str = "nmpool/shared-artifact/v2";
 const HEADER_LIMIT: u64 = 65536;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -41,6 +41,8 @@ pub struct Header {
     pub runtime_digest: String,
     pub manifest_digest: String,
     pub origin: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance_digest: Option<String>,
     pub nonempty: bool,
     pub files: u64,
     pub bytes: u64,
@@ -110,7 +112,15 @@ impl Store {
         tree::copy_verified(source, &tree, &expected)?;
         native::protect_tree(&tree)?;
         let manifest = tree::manifest(&tree)?;
-        let header = make_header(&tree, &manifest, capture, origin)?;
+        let provenance = capture.provenance(origin, tree::fingerprint(&manifest)?)?;
+        let provenance_bytes = serde_json::to_vec(&provenance)?;
+        let mut header = make_header(&tree, &manifest, capture, &provenance.origin)?;
+        header.provenance_digest = Some(digest(&provenance_bytes));
+        if serde_json::to_vec(&header)?.len() > usize::try_from(HEADER_LIMIT)? {
+            bail!("artifact_header_size");
+        }
+        write_new(&staging.join("provenance.json"), &provenance_bytes)?;
+        native::protect_guard(&staging.join("provenance.json"))?;
         let id = header_id(&header)?;
         write_new(
             &staging.join("manifest.json"),
@@ -187,6 +197,7 @@ fn make_header(
         runtime_digest: capture.runtime_digest.clone(),
         manifest_digest: tree::fingerprint(manifest)?,
         origin: origin.into(),
+        provenance_digest: None,
         nonempty: true,
         files: u64::try_from(manifest.iter().filter(|entry| entry.kind == "file").count())?,
         bytes: manifest.iter().map(|entry| entry.bytes).sum(),
@@ -257,6 +268,12 @@ fn verify_artifact(artifact: &Path, header: &Header, full: bool) -> Result<()> {
 }
 
 fn verify_full(artifact: &Path, header: &Header) -> Result<()> {
+    if let Some(expected) = &header.provenance_digest {
+        let bytes = read_bounded(&artifact.join("provenance.json"), 256 * 1024 * 1024)?;
+        if digest(&bytes) != *expected {
+            bail!("artifact_provenance_changed");
+        }
+    }
     let bytes = read_bounded(&artifact.join("manifest.json"), 256 * 1024 * 1024)?;
     let manifest: Vec<tree::Entry> = serde_json::from_slice(&bytes)?;
     if tree::fingerprint(&manifest)? != header.manifest_digest
@@ -380,16 +397,14 @@ impl Store {
 }
 
 impl Store {
-    /// Runtime startup tolerates another short metadata operation holding the pool.
+    /// Runtime startup waits for the current pool operation, including long builds.
     /// The existing lock is acquired normally; no stale-lock override is used.
     pub fn open_for_runtime(cache: &Path) -> Result<Self> {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
             let result = Self::open(cache);
             if result
                 .as_ref()
                 .is_err_and(|error| error.to_string().starts_with("cache_busy:"))
-                && std::time::Instant::now() < deadline
             {
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 continue;

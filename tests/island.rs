@@ -13,6 +13,7 @@ fn policy() -> Value {
     json!({
         "schema":"nmpool/island/v1", "independent_npm_island":true,
         "acknowledge_unsandboxed_scripts":true, "trust_domain":"local-test",
+        "registry_hosts":["packages.example.test", "registry.npmjs.org"],
         "allow_local_attestation":true, "generator_inputs":["schema.txt", "generate.cjs"],
         "context_inputs":[], "required_probes":["generated/index.js"],
         "build_commands":[{"program":"npm","args":["ci","--audit=false","--fund=false"],"env":{}}],
@@ -426,6 +427,18 @@ fn public_cli_prepares_and_links_a_generated_artifact() {
         artifact,
         "--full",
     ]);
+    cli_code(
+        &[
+            "shared-status",
+            "--package",
+            package_text,
+            "--cache",
+            cache_text,
+            "--profile",
+            profile_text,
+        ],
+        2,
+    );
     assert_eq!(
         fs::read(package.join("node_modules/generated/index.js")).unwrap(),
         b"module.exports=\"schema-v1\""
@@ -435,13 +448,18 @@ fn public_cli_prepares_and_links_a_generated_artifact() {
 }
 
 fn cli(args: &[&str]) -> Value {
+    cli_code(args, 0)
+}
+
+fn cli_code(args: &[&str], expected: i32) -> Value {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_nmpool"))
         .args(args)
         .env("NMP_TEST_TOKEN", "fixture-token")
         .output()
         .unwrap();
-    assert!(
-        output.status.success(),
+    assert_eq!(
+        output.status.code(),
+        Some(expected),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -669,6 +687,129 @@ fn lost_target_during_link_staging_does_not_strand_retained_original() {
         b"keep me"
     );
     remove_consumer_link(&local.join("link"));
+    drop(store);
+    restore_fixture(&root);
+}
+
+#[test]
+fn registry_admission_and_provenance_preserve_local_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let lock = json!({"lockfileVersion":2,"packages":{"":{},
+        "node_modules/private":{"resolved":"https://packages.example.test/private.tgz"},
+        "node_modules/pinned":{"resolved":"https://registry.npmjs.org/pinned.tgz","integrity":"sha512-fixture"}}});
+    fs::write(
+        package.join("package-lock.json"),
+        serde_json::to_vec(&lock).unwrap(),
+    )
+    .unwrap();
+    let captured = capture(&package, &profile);
+    let provenance = captured
+        .provenance("controlled-build", "observed-manifest".into())
+        .unwrap();
+    assert_eq!(provenance.origin, "local-attestation");
+    assert_eq!(provenance.trust_domain, "local-test");
+    assert!(provenance.observed_at > 0);
+    let pinned = provenance
+        .sources
+        .get("node_modules/pinned")
+        .ok_or("missing pinned source")
+        .unwrap();
+    assert_eq!(pinned.upstream_integrity.as_deref(), Some("sha512-fixture"));
+    let private = provenance
+        .sources
+        .get("node_modules/private")
+        .ok_or("missing private source")
+        .unwrap();
+    assert_eq!(private.registry_host, "packages.example.test");
+    assert!(private.upstream_integrity.is_none());
+    fs::write(
+        package.join(".npmrc"),
+        "registry=https://unreviewed.example.test/",
+    )
+    .unwrap();
+    assert!(Capture::read(&package, &profile, Path::new("node"), None).is_err());
+}
+
+#[test]
+fn large_source_provenance_is_separate_and_bound_to_the_generation() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let mut packages = serde_json::Map::new();
+    packages.insert(String::new(), json!({}));
+    for index in 0..3000 {
+        packages.insert(
+            format!("node_modules/package{index}"),
+            json!({"resolved":"https://packages.example.test/package.tgz"}),
+        );
+    }
+    fs::write(
+        package.join("package-lock.json"),
+        serde_json::to_vec(&json!({"lockfileVersion":2,"packages":packages})).unwrap(),
+    )
+    .unwrap();
+    fs::create_dir_all(package.join("node_modules/generated")).unwrap();
+    fs::write(
+        package.join("node_modules/generated/index.js"),
+        "module.exports='schema-v1'",
+    )
+    .unwrap();
+    let captured = capture(&package, &profile);
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let plan = store.plan_adopt(&captured).unwrap();
+    let (artifact, header) = store.adopt(&captured, &plan.id).unwrap();
+    assert_eq!(header.origin, "local-attestation");
+    let directory = store.artifact(&artifact).unwrap();
+    assert!(
+        fs::metadata(directory.join("provenance.json"))
+            .unwrap()
+            .len()
+            > 65536
+    );
+    assert!(fs::metadata(directory.join("header.json")).unwrap().len() < 65536);
+    store.read(&artifact, true).unwrap();
+    let provenance = directory.join("provenance.json");
+    restore_fixture(&provenance);
+    fs::write(&provenance, b"{}").unwrap();
+    nmpool::platform::shared::protect_guard(&provenance).unwrap();
+    assert!(store.read(&artifact, true).is_err());
+    assert!(store.read(&artifact, false).is_err());
+    drop(store);
+    restore_fixture(&root);
+}
+
+#[test]
+fn qualification_requires_its_completed_adoption_and_exact_receipt() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    fs::create_dir_all(package.join("node_modules/generated")).unwrap();
+    let generated = package.join("node_modules/generated/index.js");
+    fs::write(&generated, "module.exports='schema-v1'").unwrap();
+    let captured = capture(&package, &profile);
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let first = store.plan_adopt(&captured).unwrap();
+    let (a, _) = store.adopt(&captured, &first.id).unwrap();
+    store.qualify(&captured, &a).unwrap();
+    fs::write(&generated, "module.exports='schema-v1'; // different bytes").unwrap();
+    let second = store.plan_adopt(&captured).unwrap();
+    let (b, _) = store.adopt(&captured, &second.id).unwrap();
+    let adopted = store.root.join("audit").join(format!("{b}.adopted"));
+    fs::write(&adopted, serde_json::to_vec(&first.id).unwrap()).unwrap();
+    assert!(store.qualify(&captured, &b).is_err());
+    fs::write(&adopted, serde_json::to_vec(&second.id).unwrap()).unwrap();
+    let qualified = store.root.join("audit").join(format!("{b}.qualified"));
+    fs::copy(
+        store.root.join("audit").join(format!("{a}.qualified")),
+        &qualified,
+    )
+    .unwrap();
+    assert!(store.plan_replace(&captured, &b).is_err());
+    fs::remove_file(qualified).unwrap();
+    store.qualify(&captured, &b).unwrap();
+    store.plan_replace(&captured, &b).unwrap();
     drop(store);
     restore_fixture(&root);
 }

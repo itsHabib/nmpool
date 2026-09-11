@@ -150,12 +150,20 @@ impl Store {
         if plan.source_identity != native::identity(&capture.package.join("node_modules"))? {
             bail!("source_changed");
         }
+        write_new(
+            &self
+                .root
+                .join("audit")
+                .join(format!("{}.adopted", candidate.0)),
+            &serde_json::to_vec(&plan.id)?,
+        )?;
         Ok(candidate)
     }
 
     pub fn qualify(&self, capture: &Capture, artifact: &str) -> Result<Header> {
         let header = self.read(artifact, true)?;
         match_request(capture, &header)?;
+        self.require_adopted(artifact, &header)?;
         if !capture.policy.allow_local_attestation {
             bail!("adoption_unqualified");
         }
@@ -177,6 +185,32 @@ impl Store {
         self.record_qualification(artifact, &header)?;
         super::remove_staging(&staging)?;
         Ok(header)
+    }
+
+    fn require_adopted(&self, artifact: &str, header: &Header) -> Result<()> {
+        let id: String = serde_json::from_slice(
+            &read_bounded(
+                &self.root.join("audit").join(format!("{artifact}.adopted")),
+                65536,
+            )
+            .context("qualification_requires_completed_adoption")?,
+        )?;
+        let plan = self.load_plan(&id)?;
+        let candidate: String = serde_json::from_slice(&read_bounded(
+            &self
+                .root
+                .join("transactions")
+                .join(&id)
+                .join("candidate.json"),
+            65536,
+        )?)?;
+        if plan.operation != "adopt"
+            || plan.request_key != header.request_key
+            || candidate != artifact
+        {
+            bail!("adoption_candidate_mismatch");
+        }
+        Ok(())
     }
 
     pub(super) fn record_qualification(&self, id: &str, header: &Header) -> Result<()> {

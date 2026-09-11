@@ -33,13 +33,17 @@ impl Drop for Handle {
 }
 
 fn open(path: &Path, moving: bool) -> Result<Handle> {
+    open_access(path, moving, moving)
+}
+
+fn open_access(path: &Path, moving: bool, guard: bool) -> Result<Handle> {
     let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
     if wide.contains(&0) {
         bail!("nul_in_path");
     }
     wide.push(0);
     let mut access = FILE_READ_ATTRIBUTES;
-    let sharing = share_mode(moving);
+    let sharing = share_mode(guard);
     if moving {
         access |= DELETE;
     }
@@ -94,22 +98,32 @@ pub(super) fn native_move(
     {
         bail!("identity_changed");
     }
-    let parent = open(destination.parent().context("move_parent_missing")?, true)?;
-    let parent_info = information(&parent)?;
-    if file_identity(&parent_info) != *parent_identity
-        || parent_info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
-    {
-        bail!("destination_parent_changed");
-    }
-    rename(&handle, &parent, destination)
+    let _parents = guard_parents(destination, parent_identity)?;
+    rename(&handle, destination)
 }
 
-fn rename(handle: &Handle, parent: &Handle, destination: &Path) -> Result<()> {
-    let wide: Vec<u16> = destination
-        .file_name()
-        .context("move_name_missing")?
-        .encode_wide()
-        .collect();
+fn guard_parents(destination: &Path, expected: &Identity) -> Result<Vec<Handle>> {
+    let parent = destination.parent().context("move_parent_missing")?;
+    let ancestors: Vec<_> = parent.ancestors().collect();
+    let mut handles = Vec::new();
+    for ancestor in ancestors.into_iter().rev() {
+        // Read attributes is sufficient; withholding SHARE_DELETE prevents rename
+        // without requiring DELETE permission on volume roots or other ancestors.
+        let handle = open_access(ancestor, false, true)?;
+        if information(&handle)?.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            bail!("destination_ancestor_changed");
+        }
+        handles.push(handle);
+    }
+    let last = handles.last().context("move_parent_missing")?;
+    if file_identity(&information(last)?) != *expected {
+        bail!("destination_parent_changed");
+    }
+    Ok(handles)
+}
+
+fn rename(handle: &Handle, destination: &Path) -> Result<()> {
+    let wide: Vec<u16> = destination.as_os_str().encode_wide().collect();
     if wide.contains(&0) || !destination.is_absolute() {
         bail!("invalid_move_destination");
     }
@@ -126,10 +140,9 @@ fn rename(handle: &Handle, parent: &Handle, destination: &Path) -> Result<()> {
     // SAFETY: u64 allocation provides native struct alignment and enough space for
     // header plus UTF-16 payload. Zero initialization leaves ReplaceIfExists false.
     unsafe {
-        // Resolve the single final component relative to the verified, pinned
-        // destination parent instead of re-traversing a mutable full pathname.
-        // https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_rename_info
-        (*raw).RootDirectory = parent.0;
+        // Every destination ancestor remains open without SHARE_DELETE until
+        // this full-path rename returns. RootDirectory stays null: Windows CI
+        // rejects the relative-name variant with ERROR_INVALID_PARAMETER.
         (*raw).FileNameLength = u32::try_from(wide.len() * 2)?;
         ptr::copy_nonoverlapping(
             wide.as_ptr(),
@@ -177,4 +190,22 @@ const fn share_mode(moving: bool) -> u32 {
         return FILE_SHARE_READ | FILE_SHARE_WRITE;
     }
     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "Tests fail on fixture errors")]
+mod tests {
+    #[test]
+    fn destination_guards_prevent_ancestor_replacement() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(temp.path()).unwrap();
+        let ancestor = root.join("ancestor");
+        let parent = ancestor.join("parent");
+        std::fs::create_dir_all(&parent).unwrap();
+        let expected = super::native_identity(&parent).unwrap();
+        let guards = super::guard_parents(&parent.join("tree"), &expected).unwrap();
+        assert!(std::fs::rename(&ancestor, root.join("moved")).is_err());
+        drop(guards);
+        std::fs::rename(&ancestor, root.join("moved")).unwrap();
+    }
 }

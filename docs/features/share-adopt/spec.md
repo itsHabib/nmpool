@@ -214,9 +214,11 @@ New versioned records (schema validation rejects unknown major versions):
   policy hash, runtime identity digest, full-manifest digest, nonempty/count summary,
   at most 16 required probes, qualification references and origin. Cap serialized
   headers at 64 KiB; reject oversize records. Define `artifact_id` as SHA-256 over
-  domain `nmpool/shared-artifact/v1` followed by canonical UTF-8 JSON containing
+  domain `nmpool/shared-artifact/v2` followed by canonical UTF-8 JSON containing
   only `{schema, request_key, policy_hash, runtime_digest, manifest_digest, origin,
-  nonempty, counts, required_probes}`. The bounded probes and counts are part of
+  provenance_digest, nonempty, files, bytes, root_identity, required_probes}`.
+  This identifies a physical generation; content equivalence is the separate
+  manifest digest. The provenance digest binds the detailed observed-source record. The bounded probes and counts are part of
   identity, so their accidental alteration cannot silently weaken attach checks.
   Canonical JSON recursively sorts object keys, has no insignificant whitespace,
   uses UTF-8 string encoding and permits integers only for numeric fields. The

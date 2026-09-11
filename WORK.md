@@ -1,61 +1,52 @@
 # Live sharing and adoption
 
-Objective: complete the opt-in shared node_modules workflow described in
-`docs/features/share-adopt/spec.md` and issues #6, #7, #8 and #10. Private copy
-remains supported. Qualification commands alone do not complete this work.
+Objective: complete opt-in shared node_modules from docs/features/share-adopt/spec.md
+and issues #6, #7, #8 and #10. Qualification commands alone do not complete this work.
+Branch: feat/live-sharing. PR: https://github.com/itsHabib/nmpool/pull/16
 
-## Completion evidence
+## Implemented and locally verified
 
-- Versioned per-island policy keys npm v2/v3, generator input bytes, approved
-  recipe, workspace context and native runtime; private registries and missing
-  upstream integrity retain explicit local provenance.
-- Staged script/generator installation publishes protected, fixed generations.
-- Two consumers attach to one generation without copying/full scanning on the
-  fast path; required probes, current request and physical identities are checked.
-- Approved runtime commands receive separate writable cache directories; dependency
-  bytes remain unchanged after concurrent commands.
-- Planned adoption copies and verifies an existing tree without moving it;
-  qualification binds the exact candidate and inputs to application checks.
-- Explicit replacement retains original tree with durable transaction provenance.
-  Recovery returns only that exact tree and never overwrites new user work.
-- Pool aliases, source swaps, missing/empty targets, held handles, collisions,
-  corruption and interrupted transaction transitions preserve seed/retained data.
-- Current private-copy suite plus new public CLI tests pass locally and on native
-  macOS/Windows. Independent reviews and Gate authorize the exact merged head.
-- README and onboarding show usable commands and accurate verification limits.
+- Explicit island policy supports npm v2/v3, generator bytes, approved staged scripts,
+  declared workspace context, native runtime, private registries and local attestation.
+- registry_hosts admits lockfile and npmrc hosts. Protected provenance.json preserves
+  source hosts, supplied integrity, observation time, trust domain and manifest digest.
+  The bounded artifact/v2 header binds its digest; a 3,000-source fixture checks the
+  large record stays outside the header and tampering quarantines the generation.
+- Multiple consumers attach to one protected physical tree. Fast checks use bounded
+  headers/probes/current inputs; they explicitly do not claim full current verification.
+  Concurrent approved runtime commands use separate writable state. Runtime acquisition
+  waits for the pool holder without the previous arbitrary 30-second timeout.
+- Planned adoption leaves originals untouched. Qualification requires the exact completed
+  adoption candidate; another candidate's qualification receipt cannot be reused.
+- Replacement retains original identity/content/provenance. Recovery preserves new user
+  work and restores the original even when uncertain staging must be held separately.
+- Durable local link intent precedes creation; interrupted pre-publication links have a
+  recovery path. Successful build/qualification staging is removed without following
+  links or changing published/retained trees. Failed staging remains held; no GC exists.
+- Public CLI tests cover prepare/link/run/status (exit 2), adopt/qualify/planned replace,
+  retained listing and rollback. Private-copy tests remain intact.
+- Full local checks pass: 92 tests, formatting, strict Clippy and docs. Windows cross-target
+  strict Clippy passes. Evidence: /private/tmp/nmpool-policy-chain-final.log and
+  /private/tmp/nmpool-policy-chain-windows-final.log.
 
-Actual work-laptop application acceptance and performance require its reports.
-Do not invent those results or use their absence to stop portable implementation.
-No automatic garbage collection or published-generation mutation is introduced.
+## Native evidence and remaining work
 
-Branch: feat/live-sharing. Implementation files are split among bounded workers;
-parent integrates CLI, end-to-end tests, documentation, CI and review.
+Native Windows passed 1b4c4ae. At 5848c41, run 34610124586 failed replacement with
+ERROR_INVALID_PARAMETER from the RootDirectory relative-name variant. Current code
+restores the previously working full-path rename while holding no-delete handles on
+all destination ancestors, validating the parent's identity. A native-only test checks
+ancestor rename is blocked while guards live. This fix still requires native CI.
 
-## Review follow-up, September 11
+Local Claude reviewed c678f27 and found a rollback/staging coupling, now covered by
+the lost-target regression. The latest policy/provenance/candidate/native changes need
+independent exact-head review. Copilot findings 3989940574, 3989940781 and 3989940828
+are implemented; do not resolve them until native checks and review verify this head.
+Hosted Codex review quota and GitHub Claude credentials were unavailable previously;
+use current live evidence and the documented local Claude fallback.
 
-Current follow-up fixes legacy v1 plan parsing, disposable build/qualification
-cleanup, recovery preview validation, durable package-local link intent/recovery,
-README mode wording, and full-audit quarantine classification. Public CLI coverage
-now includes adopt/qualify/planned replacement/retained/rollback. Local full checks
-pass (89 tests); Windows cross-target Clippy passes. Native CI still must verify
-this revision. Previous published head 1b4c4ae passed native Windows.
-
-Remaining review disposition: Copilot comments 3989940574 (trust-domain meaning),
-3989940781 (candidate qualification
-binding), 3989940828 (provenance). Also assess suppressed lock-wait feedback and
-finish shared-status CLI exit coverage. Review source is PR16 and local review
-reports; no final approval or merge is claimed. Gate and work-laptop handoff remain.
-
-Second follow-up pins Windows rename to a verified destination-parent handle and
-keeps retained-original rollback independent of staging-target availability
-(`staging_held` reports the leftover). Local full checks and Windows cross-Clippy
-pass; native verification of these changes remains required. Local Claude reviewed
-c678f27 and found the staging/rollback coupling; the new lost-target regression
-covers its fix. Its two P3 observations (empty pre-intent directory residue and
-missing recovered marker on an unpublished attachment) remain non-destructive.
-
-Next implementation requirement from spec lines 142-172: explicit registry-host
-policy and immutable local-attestation provenance including registry identity,
-observation time and preserved upstream integrity. Current `trust_domain` is only
-a namespace and policy hash, so do not call this requirement complete. Keep the
-bounded header; detailed provenance must not overflow it on the large real island.
+Remaining deliverables: native macOS/Windows CI, final review/findings disposition,
+Gate-authorized exact-head merge, public README/onboarding/build and work-laptop
+handoff refresh. Actual work-laptop application acceptance/performance still needs
+its sanitized profile/commands and reports (issue #10); do not invent those results
+or let their absence stop portable implementation. Preserve original scope and keep
+the goal active until completion is proven.

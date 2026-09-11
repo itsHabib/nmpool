@@ -20,6 +20,10 @@ pub struct Assessment {
     pub integrity_gap_packages: usize,
     pub nonpublic_or_unresolved_packages: usize,
     pub pnpm_workspace_files: usize,
+    pub pnp_files: usize,
+    pub alternative_lockfiles: usize,
+    pub nonnpm_manager_manifests: usize,
+    pub local_or_linked_packages: usize,
     pub workspace_manifests: usize,
     pub npmrc_files: usize,
     pub known_npmrc_keys: Vec<&'static str>,
@@ -43,6 +47,10 @@ pub fn run(path: &Path) -> Result<Assessment> {
         integrity_gap_packages: 0,
         nonpublic_or_unresolved_packages: 0,
         pnpm_workspace_files: 0,
+        pnp_files: 0,
+        alternative_lockfiles: 0,
+        nonnpm_manager_manifests: 0,
+        local_or_linked_packages: 0,
         workspace_manifests: 0,
         npmrc_files: 0,
         known_npmrc_keys: Vec::new(),
@@ -51,6 +59,7 @@ pub fn run(path: &Path) -> Result<Assessment> {
         prisma_schema_present: false,
     };
     inspect_package(&package, &mut report)?;
+    inspect_alternative_locks(&package, &mut report)?;
     inspect_lock(&package, &mut report)?;
     inspect_ancestors(&package, &mut report)?;
     report.prisma_schema_present =
@@ -80,6 +89,31 @@ fn read_optional(path: &Path, limit: u64) -> Result<Option<Vec<u8>>> {
     Ok(Some(bytes))
 }
 
+fn marker_present(path: &Path) -> Result<bool> {
+    platform::plain_path(path)?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() => Ok(true),
+        Ok(_) => bail!("assessment_marker_type"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => bail!("assessment_marker_unavailable"),
+    }
+}
+
+fn inspect_alternative_locks(package: &Path, report: &mut Assessment) -> Result<()> {
+    for name in [
+        "npm-shrinkwrap.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "bun.lock",
+        "bun.lockb",
+    ] {
+        if marker_present(&package.join(name))? {
+            report.alternative_lockfiles += 1;
+        }
+    }
+    Ok(())
+}
+
 fn json_optional(path: &Path, limit: u64) -> Result<Option<Value>> {
     match read_optional(path, limit)? {
         Some(bytes) => {
@@ -106,12 +140,19 @@ fn inspect_lock(package: &Path, report: &mut Assessment) -> Result<()> {
     report.lockfile_version = lock.get("lockfileVersion").and_then(Value::as_u64);
     let packages = lock.get("packages").and_then(Value::as_object);
     match packages {
-        Some(packages) => packages
-            .iter()
-            .for_each(|(name, value)| inspect_dependency(name, value, report)),
+        Some(packages) => inspect_packages(packages, report),
         None => report.blockers.push("lock_packages_unavailable"),
     }
     Ok(())
+}
+
+fn inspect_packages(packages: &serde_json::Map<String, Value>, report: &mut Assessment) {
+    if !packages.contains_key("") {
+        report.blockers.push("lock_root_missing");
+    }
+    for (name, value) in packages {
+        inspect_dependency(name, value, report);
+    }
 }
 
 fn inspect_dependency(name: &str, value: &Value, report: &mut Assessment) {
@@ -120,6 +161,11 @@ fn inspect_dependency(name: &str, value: &Value, report: &mut Assessment) {
     }
     if name.is_empty() {
         return;
+    }
+    if !inputs::registry_package_path(name)
+        || value.get("link").and_then(Value::as_bool) == Some(true)
+    {
+        report.local_or_linked_packages += 1;
     }
     if value
         .get("integrity")
@@ -163,8 +209,11 @@ fn inspect_ancestors(package: &Path, report: &mut Assessment) -> Result<()> {
 }
 
 fn inspect_ancestor(path: &Path, report: &mut Assessment) -> Result<()> {
-    if read_optional(&path.join("pnpm-workspace.yaml"), SMALL_LIMIT)?.is_some() {
+    if marker_present(&path.join("pnpm-workspace.yaml"))? {
         report.pnpm_workspace_files += 1;
+    }
+    if marker_present(&path.join(".pnp.cjs"))? {
+        report.pnp_files += 1;
     }
     if let Some(manifest) = json_optional(&path.join("package.json"), SMALL_LIMIT)? {
         inspect_manifest(&manifest, report);
@@ -177,6 +226,13 @@ fn inspect_ancestor(path: &Path, report: &mut Assessment) -> Result<()> {
 }
 
 fn inspect_manifest(manifest: &Value, report: &mut Assessment) {
+    if manifest
+        .get("packageManager")
+        .and_then(Value::as_str)
+        .is_some_and(|manager| !manager.starts_with("npm@"))
+    {
+        report.nonnpm_manager_manifests += 1;
+    }
     if manifest.get("workspaces").is_some() {
         report.workspace_manifests += 1;
     }
@@ -228,6 +284,19 @@ fn install_state(path: &Path) -> Result<&'static str> {
 
 fn add_blockers(report: &mut Assessment) {
     let conditions = [
+        (report.pnp_files > 0, "pnp_layout_requires_qualification"),
+        (
+            report.alternative_lockfiles > 0,
+            "alternative_lockfile_requires_qualification",
+        ),
+        (
+            report.nonnpm_manager_manifests > 0,
+            "package_manager_requires_qualification",
+        ),
+        (
+            report.local_or_linked_packages > 0,
+            "local_dependency_requires_qualification",
+        ),
         (
             !matches!(report.lockfile_version, Some(2 | 3)),
             "npm_lock_v2_or_v3_required",
@@ -249,7 +318,7 @@ fn add_blockers(report: &mut Assessment) {
             "registry_provenance_required",
         ),
         (
-            report.pnpm_workspace_files + report.workspace_manifests > 0,
+            report.pnpm_workspace_files + report.workspace_manifests + report.pnp_files > 0,
             "island_boundary_required",
         ),
         (

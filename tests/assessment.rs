@@ -203,11 +203,14 @@ fn every_install_hook_is_detected_in_locked_package_metadata() {
 }
 
 fn assess_dependency(dependency: &serde_json::Value) -> assessment::Assessment {
+    assess_named_dependency("node_modules/a", dependency)
+}
+
+fn assess_named_dependency(name: &str, dependency: &serde_json::Value) -> assessment::Assessment {
     let temp = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(temp.path()).unwrap();
     write(&root.join("package.json"), "{}");
-    let lock =
-        serde_json::json!({"lockfileVersion": 3, "packages": {"node_modules/a": dependency}});
+    let lock = serde_json::json!({"lockfileVersion": 3, "packages": {"": {}, name: dependency}});
     write(&root.join("package-lock.json"), &lock.to_string());
     assessment::run(&root).unwrap()
 }
@@ -291,4 +294,130 @@ fn check_registry_count(url: &str, count: usize) {
         count > 0
     );
     assert!(!serde_json::to_string(&report).unwrap().contains("SECRET"));
+}
+
+#[test]
+fn ancestor_pnp_marker_is_reported_without_loading_its_body() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let package = root.join("package");
+    fs::create_dir(&package).unwrap();
+    write(
+        &root.join(".pnp.cjs"),
+        "throw new Error('SECRET_MUST_NOT_EXECUTE');",
+    );
+    let marker = fs::OpenOptions::new()
+        .write(true)
+        .open(root.join(".pnp.cjs"))
+        .unwrap();
+    marker.set_len(64 * 1024 * 1024).unwrap();
+    let report = assessment::run(&package).unwrap();
+    assert_eq!(report.pnp_files, 1);
+    assert!(report.blockers.contains(&"island_boundary_required"));
+    assert!(
+        report
+            .blockers
+            .contains(&"pnp_layout_requires_qualification")
+    );
+    assert!(!serde_json::to_string(&report).unwrap().contains("SECRET"));
+}
+
+#[test]
+fn nonnpm_package_manager_is_reported_without_its_value() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    write(
+        &root.join("package.json"),
+        r#"{"packageManager":"pnpm@SECRET"}"#,
+    );
+    let report = assessment::run(&root).unwrap();
+    assert_eq!(report.nonnpm_manager_manifests, 1);
+    assert!(
+        report
+            .blockers
+            .contains(&"package_manager_requires_qualification")
+    );
+    assert!(!serde_json::to_string(&report).unwrap().contains("SECRET"));
+    write(&root.join("package.json"), r#"{"packageManager":"npm@10"}"#);
+    assert_eq!(assessment::run(&root).unwrap().nonnpm_manager_manifests, 0);
+}
+
+#[test]
+fn absent_lock_root_has_an_explicit_requirement() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    write(
+        &root.join("package-lock.json"),
+        r#"{"lockfileVersion":3,"packages":{}}"#,
+    );
+    assert!(
+        assessment::run(&root)
+            .unwrap()
+            .blockers
+            .contains(&"lock_root_missing")
+    );
+}
+
+#[test]
+fn local_link_and_invalid_package_paths_are_reported_without_names() {
+    let names = [
+        "packages/SECRET",
+        "node_modules/../SECRET",
+        "node_modules/./SECRET",
+        r"node_modules/SECRET\name",
+    ];
+    for name in names {
+        let report = assess_named_dependency(name, &serde_json::json!({}));
+        check_local_gap(&report);
+    }
+    check_local_gap(&assess_dependency(&serde_json::json!({"link": true})));
+    assert_eq!(
+        assess_dependency(&serde_json::json!({})).local_or_linked_packages,
+        0
+    );
+}
+
+fn check_local_gap(report: &assessment::Assessment) {
+    assert_eq!(report.local_or_linked_packages, 1);
+    assert!(
+        report
+            .blockers
+            .contains(&"local_dependency_requires_qualification")
+    );
+    assert!(!serde_json::to_string(&report).unwrap().contains("SECRET"));
+}
+
+#[test]
+fn every_alternative_lock_marker_is_reported() {
+    for name in [
+        "npm-shrinkwrap.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "bun.lock",
+        "bun.lockb",
+    ] {
+        check_alternative_lock(name);
+    }
+}
+
+fn check_alternative_lock(name: &str) {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    write(&root.join(name), "SECRET");
+    let report = assessment::run(&root).unwrap();
+    assert_eq!(report.alternative_lockfiles, 1);
+    assert!(
+        report
+            .blockers
+            .contains(&"alternative_lockfile_requires_qualification")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_pnp_marker_refuses_without_following() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    std::os::unix::fs::symlink(root.join("missing"), root.join(".pnp.cjs")).unwrap();
+    assert!(assessment::run(&root).is_err());
 }

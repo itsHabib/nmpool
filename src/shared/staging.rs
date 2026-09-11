@@ -127,6 +127,7 @@ impl Store {
             id: id.into(),
             operation: "remove-staging-link".into(),
             committed: false,
+            staging_held: false,
             created_at: None,
             git_commit: None,
             git_branch: None,

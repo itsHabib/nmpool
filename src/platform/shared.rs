@@ -83,18 +83,26 @@ pub fn move_checked(source: &Path, destination: &Path, expected: &Identity) -> R
         bail!("identity_changed");
     }
     let parent = destination.parent().context("move_parent_missing")?;
-    if identity(parent)?.volume != expected.volume {
+    let parent_identity = identity(parent)?;
+    if parent_identity.volume != expected.volume {
         bail!("cross_volume_move_refused");
     }
     super::absent(destination)?;
-    native_move(source, destination, expected)
+    native_move(source, destination, expected, &parent_identity)
 }
 
 #[cfg(unix)]
-fn native_move(source: &Path, destination: &Path, expected: &Identity) -> Result<()> {
+fn native_move(
+    source: &Path,
+    destination: &Path,
+    expected: &Identity,
+    parent_identity: &Identity,
+) -> Result<()> {
     // nmpool callers are serialized. Same-user hostile pathname races are outside
     // the Unix exclusive-owner contract; no-replace still prevents clobbering.
-    if identity(source)? != *expected {
+    if identity(source)? != *expected
+        || identity(destination.parent().context("move_parent_missing")?)? != *parent_identity
+    {
         bail!("identity_changed");
     }
     super::publish(source, destination)?;

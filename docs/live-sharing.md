@@ -88,6 +88,8 @@ successful build and qualification copies are removed. An interrupted local link
 creation is recorded before the link exists: `recover` reports `remove-staging-link`
 when publication never reached its prepared record. It validates the private staging
 directory and intended target before removing only the link. Changed or unavailable
-targets in that early window are held for inspection.
+targets in that early window are held for inspection. During replacement rollback,
+`staging_held: true` reports that leftover separately: it never prevents restoring
+the independently verified retained original.
 Power-loss durability and the actual work-laptop application/performance trial
 remain separate from local fixture validation.

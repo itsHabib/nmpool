@@ -4,7 +4,7 @@
     reason = "Windows has no safe std API for handle-bound reparse operations; each FFI use is scoped and documented"
 )]
 use super::Identity;
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::{
     mem::{offset_of, size_of},
     os::windows::ffi::OsStrExt,
@@ -81,7 +81,12 @@ pub(super) fn native_identity(path: &Path) -> Result<Identity> {
     Ok(file_identity(&information(&open(path, false)?)?))
 }
 
-pub(super) fn native_move(source: &Path, destination: &Path, expected: &Identity) -> Result<()> {
+pub(super) fn native_move(
+    source: &Path,
+    destination: &Path,
+    expected: &Identity,
+    parent_identity: &Identity,
+) -> Result<()> {
     let handle = open(source, true)?;
     let info = information(&handle)?;
     if file_identity(&info) != *expected
@@ -89,11 +94,22 @@ pub(super) fn native_move(source: &Path, destination: &Path, expected: &Identity
     {
         bail!("identity_changed");
     }
-    rename(&handle, destination)
+    let parent = open(destination.parent().context("move_parent_missing")?, true)?;
+    let parent_info = information(&parent)?;
+    if file_identity(&parent_info) != *parent_identity
+        || parent_info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    {
+        bail!("destination_parent_changed");
+    }
+    rename(&handle, &parent, destination)
 }
 
-fn rename(handle: &Handle, destination: &Path) -> Result<()> {
-    let wide: Vec<u16> = destination.as_os_str().encode_wide().collect();
+fn rename(handle: &Handle, parent: &Handle, destination: &Path) -> Result<()> {
+    let wide: Vec<u16> = destination
+        .file_name()
+        .context("move_name_missing")?
+        .encode_wide()
+        .collect();
     if wide.contains(&0) || !destination.is_absolute() {
         bail!("invalid_move_destination");
     }
@@ -110,6 +126,10 @@ fn rename(handle: &Handle, destination: &Path) -> Result<()> {
     // SAFETY: u64 allocation provides native struct alignment and enough space for
     // header plus UTF-16 payload. Zero initialization leaves ReplaceIfExists false.
     unsafe {
+        // Resolve the single final component relative to the verified, pinned
+        // destination parent instead of re-traversing a mutable full pathname.
+        // https://learn.microsoft.com/windows/win32/api/winbase/ns-winbase-file_rename_info
+        (*raw).RootDirectory = parent.0;
         (*raw).FileNameLength = u32::try_from(wide.len() * 2)?;
         ptr::copy_nonoverlapping(
             wide.as_ptr(),

@@ -639,3 +639,36 @@ fn malformed_full_manifest_quarantines_generation_for_fast_readers() {
     drop(store);
     restore_fixture(&root);
 }
+
+#[test]
+fn lost_target_during_link_staging_does_not_strand_retained_original() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let captured = capture(&package, &profile);
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let (artifact, _) = store.prepare(&captured).unwrap();
+    fs::create_dir(package.join("node_modules")).unwrap();
+    fs::write(package.join("node_modules/original"), "keep me").unwrap();
+    let original = nmpool::platform::shared::identity(&package.join("node_modules")).unwrap();
+    let plan = store.plan_replace(&captured, &artifact).unwrap();
+    let record = store.replace(&captured, &plan.id).unwrap();
+    let local = package.join(format!(".nmpool-link-{}", record.transaction_id));
+    reproduce_unpublished_link(&store, &record, &local);
+    let generation = store.artifact(&artifact).unwrap();
+    restore_fixture(&generation);
+    fs::rename(generation.join("tree"), root.join("held-generation")).unwrap();
+    assert!(store.recover(&plan.id, false).unwrap().staging_held);
+    assert!(store.recover(&plan.id, true).unwrap().staging_held);
+    assert_eq!(
+        nmpool::platform::shared::identity(&package.join("node_modules")).unwrap(),
+        original
+    );
+    assert_eq!(
+        fs::read(package.join("node_modules/original")).unwrap(),
+        b"keep me"
+    );
+    remove_consumer_link(&local.join("link"));
+    drop(store);
+    restore_fixture(&root);
+}

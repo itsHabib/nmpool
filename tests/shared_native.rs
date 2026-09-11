@@ -64,3 +64,22 @@ fn held_directory_handle_refuses_move_without_losing_source() {
     assert_eq!(fs::read(source.join("seed")).unwrap(), b"original");
     drop(held);
 }
+
+#[test]
+fn replacement_destination_alias_preserves_source_and_target() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let source = root.join("source");
+    let outside = root.join("outside");
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&outside).unwrap();
+    fs::write(source.join("seed"), "original").unwrap();
+    let alias = root.join("retained-alias");
+    shared::create_link(&outside, &alias).unwrap();
+    let expected = shared::identity(&source).unwrap();
+    assert!(shared::move_checked(&source, &alias.join("tree"), &expected).is_err());
+    assert_eq!(shared::identity(&source).unwrap(), expected);
+    assert_eq!(fs::read(source.join("seed")).unwrap(), b"original");
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+    shared::remove_link(&alias, &shared::link_identity(&alias).unwrap()).unwrap();
+}

@@ -17,6 +17,8 @@ pub struct Plan {
     pub operation: String,
     #[serde(default)]
     pub committed: bool,
+    #[serde(default)]
+    pub staging_held: bool,
     pub created_at: Option<u64>,
     pub git_commit: Option<String>,
     pub git_branch: Option<String>,
@@ -70,6 +72,7 @@ impl Store {
             id: id.clone(),
             operation: operation.into(),
             committed: false,
+            staging_held: false,
             created_at: Some(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?
@@ -258,7 +261,8 @@ impl Store {
         if native::identity(&plan.package)? != plan.package_identity {
             bail!("recovery_package_changed");
         }
-        self.clean_staged_link(id, execute)?;
+        // Staging cleanup must never prevent restoring the independently verified original.
+        plan.staging_held = self.clean_staged_link(id, execute).is_err();
         let source = self.root.join("retained").join(id).join("tree");
         if !exists(&source)? {
             return self.recover_original_present(plan, execute);
@@ -456,6 +460,7 @@ impl Store {
             id: id.into(),
             operation: "remove-attachment".into(),
             committed: self.transaction_committed(id)?,
+            staging_held: false,
             created_at: None,
             git_commit: None,
             git_branch: None,

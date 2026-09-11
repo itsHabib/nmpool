@@ -24,14 +24,16 @@ pub struct Report {
     pub execute_access: bool,
     pub checks: Vec<Check>,
     pub cleanup: String,
+    pub errors: Vec<String>,
     pub limitation: String,
 }
 
-/// Retains its exclusively owned fixture with permissions restored for inspection.
+/// Retains its exclusively owned fixture and reports whether permission restoration succeeded.
 /// Qualification concerns these probes only, not arbitrary same-user permission changes.
 pub fn run(parent: &Path) -> Result<Report> {
     super::plain_path(parent)?;
     let parent = dunce::canonicalize(parent)?;
+    reject_install_parent(&parent)?;
     if !parent.is_dir() {
         bail!("protection_parent_not_directory");
     }
@@ -43,6 +45,17 @@ pub fn run(parent: &Path) -> Result<Report> {
     result.with_context(|| format!("protection_fixture_retained: {}", fixture.display()))
 }
 
+fn reject_install_parent(parent: &Path) -> Result<()> {
+    if parent.components().any(|part| {
+        part.as_os_str()
+            .to_str()
+            .is_some_and(|name| name.eq_ignore_ascii_case("node_modules"))
+    }) {
+        bail!("protection_parent_is_node_modules");
+    }
+    Ok(())
+}
+
 fn rehearse(fixture: &Path) -> Result<Report> {
     let root = fixture.join("guard/artifact");
     setup(&root)?;
@@ -52,8 +65,7 @@ fn rehearse(fixture: &Path) -> Result<Report> {
         bail!("fixture_baseline_read_failed");
     }
     let result = protected_probes(fixture, &root, &alias);
-    restore_permissions(&root)?;
-    result
+    finish_cleanup(result, restore_permissions(&root))
 }
 
 fn setup(root: &Path) -> Result<()> {
@@ -68,9 +80,18 @@ fn setup(root: &Path) -> Result<()> {
 
 fn protected_probes(fixture: &Path, root: &Path, alias: &Path) -> Result<Report> {
     protect(root)?;
-    let before = crate::tree::manifest(root)?;
-    let read_access = fs::read(alias.join("child/write"))? == b"fixture\n";
-    let execute_access = execute(alias)?;
+    Ok(probe_protected(fixture, root, alias))
+}
+
+fn probe_protected(fixture: &Path, root: &Path, alias: &Path) -> Report {
+    let mut errors = Vec::new();
+    let before = observe(crate::tree::manifest(root), &mut errors);
+    let read_access = observe(
+        fs::read(alias.join("child/write")).map_err(Into::into),
+        &mut errors,
+    )
+    .is_some_and(|bytes| bytes == b"fixture\n");
+    let execute_access = observe(execute(alias), &mut errors) == Some(true);
     let mut checks = probe_files(alias);
     checks.push(check(
         "create_directory",
@@ -84,13 +105,16 @@ fn protected_probes(fixture: &Path, root: &Path, alias: &Path) -> Result<Report>
         "rename_child_directory",
         fs::rename(alias.join("child"), alias.join("moved-child")),
     ));
-    undo_rename(&root.join("moved-child"), &root.join("child"))?;
+    observe(
+        undo_rename(&root.join("moved-child"), &root.join("child")),
+        &mut errors,
+    );
     let moved = root.with_file_name("moved-artifact");
     checks.push(check(
         "rename_artifact_from_parent",
         fs::rename(root, &moved),
     ));
-    undo_rename(&moved, root)?;
+    observe(undo_rename(&moved, root), &mut errors);
     // A distinct empty protected sibling permits a real removal attempt without
     // mistaking DirectoryNotEmpty for permission enforcement.
     checks.push(check(
@@ -99,16 +123,40 @@ fn protected_probes(fixture: &Path, root: &Path, alias: &Path) -> Result<Report>
     ));
     checks.push(Check {
         operation: "protected_content_mutation".into(),
-        blocked: crate::tree::manifest(root)? == before,
+        blocked: before.is_some() && observe(crate::tree::manifest(root), &mut errors) == before,
         error: None,
     });
-    Ok(Report {
+    Report {
         fixture_path: fixture.to_owned(),
-        qualified_fixture: read_access && execute_access && checks.iter().all(|item| item.blocked),
+        qualified_fixture: errors.is_empty() && read_access && execute_access && checks.iter().all(|item| item.blocked),
         protection: mechanism().into(), read_access, execute_access, checks,
-        cleanup: "owned fixture permissions restored; contents retained".into(),
-        limitation: "Disposable fixture only. Owner permission changes, privileged processes, pre-existing writable handles and production parent-chain protection are not qualified. Fixture retained with permissions restored.".into(),
-    })
+        cleanup: "pending".into(), errors,
+        limitation: "Disposable fixture only. Owner permission changes, privileged processes, pre-existing writable handles and production parent-chain protection are not qualified. Fixture retained; inspect cleanup result before removal.".into(),
+    }
+}
+
+fn observe<T>(result: Result<T>, errors: &mut Vec<String>) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            errors.push(format!("{error:#}"));
+            None
+        }
+    }
+}
+
+fn finish_cleanup(result: Result<Report>, restored: Result<()>) -> Result<Report> {
+    let mut report =
+        result.with_context(|| format!("fixture_permission_restoration: {restored:?}"))?;
+    report.cleanup = "owned fixture permissions restored; contents retained".into();
+    if let Err(error) = restored {
+        report.qualified_fixture = false;
+        report.cleanup = "incomplete; owned fixture retained for inspection".into();
+        report
+            .errors
+            .push(format!("permission_restoration_failed: {error:#}"));
+    }
+    Ok(report)
 }
 
 fn probe_files(alias: &Path) -> Vec<Check> {
@@ -161,19 +209,29 @@ fn undo_rename(moved: &Path, original: &Path) -> Result<()> {
 
 fn fixture_paths(root: &Path) -> Result<Vec<PathBuf>> {
     let guard = root.parent().context("fixture_guard_missing")?;
-    let mut paths = vec![
-        guard.to_owned(),
-        root.to_owned(),
-        root.join("child"),
-        root.join("empty"),
-        root.with_file_name("empty-artifact"),
-        root.join(executable_name()),
-    ];
-    for name in ["write", "append", "unlink", "rename", "renamed", "new-file"] {
-        paths.push(root.join("child").join(name));
-    }
-    paths.push(root.join("new-dir"));
+    let mut paths = vec![guard.to_owned()];
+    append_fixture_paths(root, &mut paths);
+    append_fixture_paths(&root.with_file_name("moved-artifact"), &mut paths);
+    paths.push(root.with_file_name("empty-artifact"));
     Ok(paths)
+}
+
+fn append_fixture_paths(root: &Path, paths: &mut Vec<PathBuf>) {
+    paths.extend([
+        root.to_owned(),
+        root.join("empty"),
+        root.join("new-dir"),
+        root.join(executable_name()),
+    ]);
+    append_child_paths(&root.join("child"), paths);
+    append_child_paths(&root.join("moved-child"), paths);
+}
+
+fn append_child_paths(child: &Path, paths: &mut Vec<PathBuf>) {
+    paths.push(child.to_owned());
+    for name in ["write", "append", "unlink", "rename", "renamed", "new-file"] {
+        paths.push(child.join(name));
+    }
 }
 
 #[cfg(unix)]
@@ -247,10 +305,9 @@ fn protect(root: &Path) -> Result<()> {
 fn restore_permissions(root: &Path) -> Result<()> {
     for path in fixture_paths(root)? {
         if path.exists() {
-            acl(
-                &path,
-                &["/remove:d", "*S-1-1-0", "/grant:r", "*S-1-1-0:(F)"],
-            )?;
+            // Reset top-down to inherited defaults from the untouched fixture parent.
+            // Never retain an explicit Everyone full-control grant.
+            acl(&path, &["/reset"])?;
         }
     }
     Ok(())
@@ -332,5 +389,63 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = dunce::canonicalize(temp.path()).unwrap();
         assert!(super::execute(&root).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inaccessible_fixture_reports_unqualified_and_restores_permissions() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = dunce::canonicalize(temp.path()).unwrap();
+        let root = fixture.join("guard/artifact");
+        let alias = fixture.join("consumer");
+        super::setup(&root).unwrap();
+        super::make_alias(&root, &alias).unwrap();
+        super::protect(&root).unwrap();
+        fs::set_permissions(
+            root.join(super::executable_name()),
+            fs::Permissions::from_mode(0o0),
+        )
+        .unwrap();
+        fs::set_permissions(root.join("child/write"), fs::Permissions::from_mode(0o0)).unwrap();
+        let result = super::probe_protected(&fixture, &root, &alias);
+        let report = super::finish_cleanup(Ok(result), super::restore_permissions(&root)).unwrap();
+        assert!(!report.qualified_fixture);
+        assert!(!report.read_access);
+        assert!(!report.execute_access);
+        assert!(!report.errors.is_empty());
+        fs::write(root.join("child/write"), b"restored").unwrap();
+        fs::remove_file(alias).unwrap();
+    }
+
+    #[test]
+    fn rollback_collision_and_cleanup_failure_preserve_unqualified_report() {
+        use std::fs;
+        let temp = tempfile::tempdir().unwrap();
+        let fixture = dunce::canonicalize(temp.path()).unwrap();
+        let root = fixture.join("guard/artifact");
+        let alias = fixture.join("consumer");
+        super::setup(&root).unwrap();
+        fs::create_dir(root.join("moved-child")).unwrap();
+        fs::write(root.join("moved-child/write"), b"collision").unwrap();
+        super::make_alias(&root, &alias).unwrap();
+        let result = super::protected_probes(&fixture, &root, &alias);
+        super::restore_permissions(&root).unwrap();
+        let report =
+            super::finish_cleanup(result, Err(anyhow::anyhow!("injected restoration failure")))
+                .unwrap();
+        assert!(!report.qualified_fixture);
+        assert!(report.cleanup.contains("incomplete"));
+        assert!(report.errors.len() >= 2, "{report:#?}");
+        remove_alias(&alias);
+    }
+
+    #[cfg(unix)]
+    fn remove_alias(path: &std::path::Path) {
+        std::fs::remove_file(path).unwrap();
+    }
+    #[cfg(windows)]
+    fn remove_alias(path: &std::path::Path) {
+        std::fs::remove_dir(path).unwrap();
     }
 }

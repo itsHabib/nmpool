@@ -82,6 +82,7 @@ fn simple_inputs_never_authorize_sharing() {
     assert_eq!(report.state, "qualification_required");
     assert!(report.blockers.contains(&"sharing_profile_unqualified"));
     assert_eq!(report.install_state, "absent");
+    assert_eq!(report.lockfile_source, Some("package-lock.json"));
     assert!(!report.prisma_schema_present);
 }
 
@@ -403,7 +404,7 @@ fn every_alternative_lock_marker_is_reported() {
 fn check_alternative_lock(name: &str) {
     let temp = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(temp.path()).unwrap();
-    write(&root.join(name), "SECRET");
+    write(&root.join(name), "{}");
     let report = assessment::run(&root).unwrap();
     assert_eq!(report.alternative_lockfiles, 1);
     assert!(
@@ -438,4 +439,80 @@ fn ancestor_alternative_lock_is_reported_without_reading_contents() {
             .contains(&"alternative_lockfile_requires_qualification")
     );
     assert!(!serde_json::to_string(&report).unwrap().contains("SECRET"));
+}
+
+const CLEAN_LOCK: &str = r#"{"lockfileVersion":3,"packages":{"":{}}}"#;
+const SHRINKWRAP: &str = r#"{"lockfileVersion":2,"packages":{"":{},"node_modules/SECRET":{"hasInstallScript":true,"resolved":"https://SECRET.invalid/a.tgz"}}}"#;
+
+#[test]
+fn shrinkwrap_takes_precedence_over_conflicting_package_lock() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    write(&root.join("package.json"), "{}");
+    write(&root.join("package-lock.json"), CLEAN_LOCK);
+    write(&root.join("npm-shrinkwrap.json"), SHRINKWRAP);
+    let before = nmpool::tree::manifest(&root).unwrap();
+    check_shrinkwrap_report(&assessment::run(&root).unwrap());
+    assert_eq!(before, nmpool::tree::manifest(&root).unwrap());
+    assert!(nmpool::inputs::Package::read(&root).is_err());
+}
+
+#[test]
+fn shrinkwrap_only_is_inventoried() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    write(&root.join("npm-shrinkwrap.json"), SHRINKWRAP);
+    check_shrinkwrap_report(&assessment::run(&root).unwrap());
+}
+
+fn check_shrinkwrap_report(report: &assessment::Assessment) {
+    assert_eq!(report.lockfile_source, Some("npm-shrinkwrap.json"));
+    assert_eq!(report.lockfile_version, Some(2));
+    assert_eq!(report.lifecycle_packages, 1);
+    assert_eq!(report.integrity_gap_packages, 1);
+    assert_eq!(report.nonpublic_or_unresolved_packages, 1);
+    assert!(
+        report
+            .blockers
+            .contains(&"alternative_lockfile_requires_qualification")
+    );
+    assert_eq!(report.state, "qualification_required");
+    assert!(!serde_json::to_string(&report).unwrap().contains("SECRET"));
+}
+
+#[test]
+fn malformed_or_oversized_shrinkwrap_cannot_fall_back() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    write(&root.join("package-lock.json"), CLEAN_LOCK);
+    write(&root.join("npm-shrinkwrap.json"), "SECRET_INVALID");
+    assert_eq!(
+        assessment::run(&root).unwrap_err().to_string(),
+        "assessment_invalid_json"
+    );
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(root.join("npm-shrinkwrap.json"))
+        .unwrap();
+    file.set_len(32 * 1024 * 1024 + 1).unwrap();
+    assert!(assessment::run(&root).is_err());
+}
+
+#[test]
+fn shrinkwrap_directory_is_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    write(&root.join("package-lock.json"), CLEAN_LOCK);
+    fs::create_dir(root.join("npm-shrinkwrap.json")).unwrap();
+    assert!(assessment::run(&root).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn linked_shrinkwrap_is_refused_without_fallback() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    write(&root.join("package-lock.json"), CLEAN_LOCK);
+    std::os::unix::fs::symlink(root.join("missing"), root.join("npm-shrinkwrap.json")).unwrap();
+    assert!(assessment::run(&root).is_err());
 }

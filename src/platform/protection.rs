@@ -62,7 +62,7 @@ fn setup(root: &Path) -> Result<()> {
     for name in ["write", "append", "unlink", "rename"] {
         fs::write(root.join("child").join(name), b"fixture\n")?;
     }
-    fs::write(root.join(executable_name()), executable_bytes())?;
+    setup_executable(root)?;
     Ok(())
 }
 
@@ -207,17 +207,16 @@ fn make_alias(root: &Path, alias: &Path) -> Result<()> {
 
 #[cfg(unix)]
 fn execute(alias: &Path) -> Result<bool> {
-    Ok(Command::new(alias.join(executable_name()))
-        .status()?
-        .success())
+    Ok(Command::new(alias.join(executable_name())).status()?.code() == Some(7))
 }
 #[cfg(unix)]
 const fn executable_name() -> &'static str {
     "execute.sh"
 }
 #[cfg(unix)]
-const fn executable_bytes() -> &'static [u8] {
-    b"#!/bin/sh\nexit 0\n"
+fn setup_executable(root: &Path) -> Result<()> {
+    fs::write(root.join(executable_name()), b"#!/bin/sh\nexit 7\n")?;
+    Ok(())
 }
 #[cfg(unix)]
 const fn mechanism() -> &'static str {
@@ -291,27 +290,47 @@ fn make_alias(root: &Path, alias: &Path) -> Result<()> {
 
 #[cfg(windows)]
 fn execute(alias: &Path) -> Result<bool> {
-    // The script path is consumed as data by PowerShell, without interpolation.
-    Ok(Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "& $env:NMP_PROBE_EXEC; exit $LASTEXITCODE",
-        ])
-        .env("NMP_PROBE_EXEC", alias.join(executable_name()))
+    Ok(Command::new(alias.join(executable_name()))
+        .args(["/d", "/c", "exit", "7"])
         .status()?
-        .success())
+        .code()
+        == Some(7))
 }
 #[cfg(windows)]
 const fn executable_name() -> &'static str {
-    "execute.cmd"
+    "execute.exe"
 }
 #[cfg(windows)]
-const fn executable_bytes() -> &'static [u8] {
-    b"@exit /b 0\r\n"
+fn setup_executable(root: &Path) -> Result<()> {
+    let system_root = std::env::var_os("SystemRoot").context("system_root_missing")?;
+    let source = PathBuf::from(system_root).join("System32/cmd.exe");
+    if !source.is_absolute() {
+        bail!("system_executable_not_absolute");
+    }
+    super::plain_path(&source)?;
+    if !fs::metadata(&source)?.is_file() {
+        bail!("system_executable_not_file");
+    }
+    // Copy only into our newly created fixture; execute the protected copy itself,
+    // not an interpreter that could report success without running the target.
+    super::copy_file(&source, &root.join(executable_name()))?;
+    Ok(())
 }
 #[cfg(windows)]
 const fn mechanism() -> &'static str {
     "windows-protected-dacl"
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    reason = "Fixture setup must fail the test on error"
+)]
+mod tests {
+    #[test]
+    fn missing_executable_cannot_qualify_execution() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(temp.path()).unwrap();
+        assert!(super::execute(&root).is_err());
+    }
 }

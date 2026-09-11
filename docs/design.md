@@ -5,11 +5,13 @@ unpublished Windows implementation described in an earlier handoff.
 
 ## Supported profile
 
-`nmpool/npm-no-scripts/v1` accepts package-lock v3, public npm registry tarballs
+`nmpool/npm-no-scripts/v2` accepts package-lock v3, public npm registry tarballs
 with SHA-512 integrity, and no declared lifecycle scripts, workspace roots or
 local/linked dependencies. The only permitted project npmrc setting is
-`legacy-peer-deps`. Files are hashed as raw bytes; absence is distinct from an empty
-file. Unknown configuration is refused without printing its values.
+`legacy-peer-deps`. JSON input CRLF pairs are normalized to LF for keys and
+staging; other bytes (including escaped string content) remain significant. npmrc
+is hashed verbatim, and absence is distinct from an empty file. Original bytes are
+retained for explain and concurrent-edit checks. Unknown configuration is refused without printing its values.
 
 Preparation copies the manifest, lock and allowed npmrc into a private cache build
 directory. It runs native Node against npm-cli.js with an empty environment except
@@ -26,6 +28,11 @@ Roxiq's Sentry/esbuild/etc. install scripts are not yet supported. Ivy MCP is th
 first real smoke workload. Script support requires reviewed complete inputs and a
 fresh behavioral comparison, not a bypass flag. pnpm and external browser caches
 are separate future work.
+
+The v2 input schema deliberately creates new keys. Prepare entries again after
+upgrading from v1; old entries are not migrated or deleted. Old receipts are refused
+with `receipt_identity_mismatch`; use the older binary to inspect them, or prepare
+and restore with the new binary into a fresh destination.
 
 ## Filesystem boundary
 

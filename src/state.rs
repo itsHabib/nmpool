@@ -149,7 +149,7 @@ fn status_locked(
     if !has_lock {
         bail!("destination_lock_missing");
     }
-    check_record(path, node, npm_cli, &bytes, &mut report)?;
+    check_record(path, node, npm_cli, &bytes, &mut report, tree::manifest)?;
     if fs::read(record_path)? != bytes {
         bail!("restoration_record_changed_during_status");
     }
@@ -162,6 +162,7 @@ fn check_record(
     npm_cli: Option<&Path>,
     bytes: &[u8],
     report: &mut Status,
+    scan: impl FnOnce(&Path) -> Result<Vec<tree::Entry>>,
 ) -> Result<()> {
     let record: Restoration =
         serde_json::from_slice(bytes).context("invalid_restoration_record")?;
@@ -173,6 +174,7 @@ fn check_record(
         bail!("restoration_record_collision");
     }
     let tools = Toolchain::discover(node, npm_cli)?;
+    let mut input_snapshot = None;
     match Package::read(path) {
         Ok(package) => {
             report.requested_key = Some(tools.key(&package.inputs)?);
@@ -181,6 +183,7 @@ fn check_record(
                 &serde_json::json!({"inputs": package.inputs, "runtime": tools.runtime}),
             );
             package.unchanged()?;
+            input_snapshot = Some(package);
         }
         Err(e) => {
             // Only a package outside the profile is input drift. A read that did
@@ -192,7 +195,7 @@ fn check_record(
             report.input_error = Some(reason);
         }
     }
-    let mut actual = tree::manifest(&path.join("node_modules"))?;
+    let mut actual = scan(&path.join("node_modules"))?;
     actual.retain(|entry| entry.path != RECORD_NAME);
     report.file_changes = file_changes(&record.receipt.entries, &actual);
     if actual != record.receipt.entries && report.file_changes.is_empty() {
@@ -200,11 +203,10 @@ fn check_record(
     }
     // Re-read after the potentially long tree scan, so input drift during the
     // scan cannot be reported as a clean snapshot.
-    if report.input_error.is_none() {
-        let fresh = Package::read(path)?;
-        if report.requested_key.as_ref() != Some(&tools.key(&fresh.inputs)?) {
-            bail!("inputs_changed_during_status");
-        }
+    if let Some(package) = input_snapshot {
+        package
+            .unchanged()
+            .context("inputs_changed_during_status")?;
     }
     tools.unchanged()?;
     report.state = "drifted".into();
@@ -248,6 +250,7 @@ pub struct Explanation {
     pub package_key: String,
     pub against_key: String,
     pub differences: Vec<String>,
+    pub input_file_details: Vec<InputFileDetail>,
     pub package_git: GitContext,
     pub against_git: GitContext,
 }
@@ -269,6 +272,7 @@ pub fn explain(
             &serde_json::json!({"inputs": package.inputs, "runtime": tools.runtime}),
             &serde_json::json!({"inputs": against.inputs, "runtime": against_tools.runtime}),
         ),
+        input_file_details: input_file_details(package, against),
         package_git: git_context(&package.path),
         against_git: git_context(&against.path),
     };
@@ -315,5 +319,91 @@ fn diff_object(
             new.get(key).unwrap_or(&Value::Null),
             result,
         );
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct InputFileDetail {
+    pub path: String,
+    pub kind: String,
+    pub message: String,
+}
+
+fn input_file_details(package: &Package, against: &Package) -> Vec<InputFileDetail> {
+    ["package.json", "package-lock.json"]
+        .into_iter()
+        .filter_map(|name| input_file_detail(name, package, against))
+        .collect()
+}
+
+fn input_file_detail(name: &str, package: &Package, against: &Package) -> Option<InputFileDetail> {
+    let left = package.contents.get(name)?;
+    let right = against.contents.get(name)?;
+    if left == right {
+        return None;
+    }
+    if crate::inputs::keyed_bytes(name, left) == crate::inputs::keyed_bytes(name, right) {
+        return Some(InputFileDetail {
+            path: name.into(),
+            kind: "line_endings_only".into(),
+            message: "line endings only (CRLF/LF); normalized for cache identity".into(),
+        });
+    }
+    let left_json: Value = serde_json::from_slice(left).ok()?;
+    let right_json: Value = serde_json::from_slice(right).ok()?;
+    if left_json != right_json {
+        return None;
+    }
+    Some(InputFileDetail {
+        path: name.into(),
+        kind: "json_representation_only".into(),
+        message: "JSON values match; representation differs and remains part of cache identity"
+            .into(),
+    })
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    reason = "Fixture setup and assertions must fail on error"
+)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_refuses_eol_rewrite_during_artifact_scan() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = dunce::canonicalize(temp.path()).unwrap();
+        let package_path = root.join("package");
+        fs::create_dir(&package_path).unwrap();
+        fs::write(
+            package_path.join("package.json"),
+            b"{\n\"name\":\"fixture\",\n\"version\":\"1.0.0\"\n}",
+        )
+        .unwrap();
+        fs::write(package_path.join("package-lock.json"), br#"{"name":"fixture","version":"1.0.0","lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0"}}}"#).unwrap();
+        let package = Package::read(&package_path).unwrap();
+        let tools = Toolchain::discover(Path::new("node"), None).unwrap();
+        let cache = crate::cache::Cache::open(&root.join("cache")).unwrap();
+        cache.prepare(&package, &tools).unwrap();
+        cache.restore(&package, &tools).unwrap();
+        let mut report = status(&package_path, Path::new("node"), None).unwrap();
+        let bytes = fs::read(package_path.join("node_modules").join(RECORD_NAME)).unwrap();
+        let error = check_record(
+            &package_path,
+            Path::new("node"),
+            None,
+            &bytes,
+            &mut report,
+            |path| {
+                let manifest = package_path.join("package.json");
+                let lf = fs::read_to_string(&manifest)?;
+                fs::write(manifest, lf.replace('\n', "\r\n"))?;
+                tree::manifest(path)
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("inputs_changed_during_status"));
+        assert_eq!(Package::read(&package_path).unwrap().inputs, package.inputs);
     }
 }

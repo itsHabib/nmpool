@@ -1,4 +1,4 @@
-//! v1 only reuses registry-only npm installs with lifecycle scripts disabled.
+//! Only reuses registry-only npm installs with lifecycle scripts disabled.
 use crate::{digest, platform, tree};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use std::{
     process::Command,
 };
 
-pub const SCHEMA: &str = "nmpool/npm-no-scripts/v1";
+pub const SCHEMA: &str = "nmpool/npm-no-scripts/v2";
 pub const RECIPE: &[&str] = &[
     "ci",
     "--ignore-scripts",
@@ -119,7 +119,12 @@ impl Package {
         let legacy_peer_deps = parse_npmrc(contents.get(".npmrc"))?;
         let files = ["package.json", "package-lock.json", ".npmrc"]
             .into_iter()
-            .map(|name| (name.into(), contents.get(name).map(|b| digest(b))))
+            .map(|name| {
+                (
+                    name.into(),
+                    contents.get(name).map(|b| digest(&keyed_bytes(name, b))),
+                )
+            })
             .collect();
         Ok(Self {
             path,
@@ -133,7 +138,7 @@ impl Package {
     }
 
     pub fn unchanged(&self) -> Result<()> {
-        if Self::read(&self.path)?.inputs != self.inputs {
+        if Self::read(&self.path)?.contents != self.contents {
             bail!("inputs_changed");
         }
         Ok(())
@@ -142,7 +147,7 @@ impl Package {
     pub fn stage(&self, destination: &Path) -> Result<()> {
         fs::create_dir(destination)?;
         for (name, bytes) in &self.contents {
-            fs::write(destination.join(name), bytes)?;
+            fs::write(destination.join(name), keyed_bytes(name, bytes))?;
         }
         Ok(())
     }
@@ -476,4 +481,21 @@ fn validate_registry_url(url: &str, name: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Normalize JSON line endings only; preserve string escapes and all other bytes.
+pub(crate) fn keyed_bytes(name: &str, bytes: &[u8]) -> Vec<u8> {
+    if !matches!(name, "package.json" | "package-lock.json") {
+        return bytes.to_vec();
+    }
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut remaining = bytes;
+    while let Some((&byte, tail)) = remaining.split_first() {
+        remaining = tail;
+        if byte == b'\r' && tail.first() == Some(&b'\n') {
+            continue;
+        }
+        result.push(byte);
+    }
+    result
 }

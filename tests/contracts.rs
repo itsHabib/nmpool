@@ -944,3 +944,206 @@ fn linked_ancestor_manifest_is_refused() {
     let error = Package::read(&child).unwrap_err();
     assert!(format!("{error:#}").contains("link_or_reparse_path"));
 }
+
+// Issue #6: losing a seed must not break existing consumers or publish an empty install.
+#[test]
+fn emptied_seed_is_refused_while_existing_private_consumer_stays_usable() {
+    let (_temp, root) = scratch();
+    let first = package(&root.join("first"));
+    let next = package(&root.join("next"));
+    let cache = Cache::open(&root.join("cache")).unwrap();
+    let receipt = seed(&cache, &first);
+    cache.restore(&first, tools()).unwrap();
+    let seed_tree = cache
+        .root
+        .join("entries")
+        .join(&receipt.key)
+        .join("node_modules");
+    fs::remove_dir_all(&seed_tree).unwrap();
+    fs::create_dir(&seed_tree).unwrap();
+    assert!(
+        cache
+            .load(&receipt.key)
+            .unwrap_err()
+            .to_string()
+            .contains("artifact_mismatch")
+    );
+    assert!(
+        cache
+            .prepare(&next, tools())
+            .unwrap_err()
+            .to_string()
+            .contains("artifact_mismatch")
+    );
+    assert!(
+        cache
+            .restore(&next, tools())
+            .unwrap_err()
+            .to_string()
+            .contains("artifact_mismatch")
+    );
+    assert!(!next.path.join("node_modules").exists());
+    assert_eq!(
+        fs::read(first.path.join("node_modules/fixture.js")).unwrap(),
+        b"module.exports=42;\n"
+    );
+    assert!(status_cli(&first.path).status.success());
+    drop(cache);
+    assert!(
+        inspect(&root.join("cache"), &receipt.key)
+            .unwrap_err()
+            .to_string()
+            .contains("artifact_mismatch")
+    );
+}
+
+fn pretty_json_inputs(path: &Path) {
+    for name in ["package.json", "package-lock.json"] {
+        let value: serde_json::Value =
+            serde_json::from_slice(&fs::read(path.join(name)).unwrap()).unwrap();
+        fs::write(path.join(name), serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    }
+}
+
+#[test]
+fn autocrlf_worktree_reuses_prepared_entry_and_explains_eol_difference() {
+    let (_temp, root) = scratch();
+    let repo = root.join("repo");
+    package(&repo);
+    pretty_json_inputs(&repo);
+    git(&repo, &["init"]);
+    git(&repo, &["config", "core.autocrlf", "true"]);
+    git(&repo, &["add", "package.json", "package-lock.json"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-m",
+            "fixture",
+        ],
+    );
+    let destination = root.join("worktree");
+    git(
+        &repo,
+        &["worktree", "add", "--detach", destination.to_str().unwrap()],
+    );
+    let source = Package::read(&repo).unwrap();
+    let consumer = Package::read(&destination).unwrap();
+    assert_ne!(source.contents, consumer.contents);
+    assert_eq!(source.inputs, consumer.inputs);
+    assert_eol_explanation(&source, &consumer);
+    assert_reverse_eol_restore(&root, &consumer, &source);
+    let cache = Cache::open(&root.join("cache")).unwrap();
+    let prepared = cache.prepare(&source, tools()).unwrap();
+    let restored = cache.restore(&consumer, tools()).unwrap();
+    assert_eq!(prepared.key, restored.key);
+    assert!(status_cli(&consumer.path).status.success());
+    assert_eq!(Package::read(&repo).unwrap().contents, source.contents);
+    assert_eq!(
+        Package::read(&destination).unwrap().contents,
+        consumer.contents
+    );
+}
+
+#[test]
+fn json_formatting_is_explained_but_semantic_changes_still_partition_keys() {
+    let (_temp, root) = scratch();
+    let source = package(&root.join("source"));
+    let destination = root.join("destination");
+    package(&destination);
+    pretty_json_inputs(&destination);
+    let formatted = Package::read(&destination).unwrap();
+    let report = nmpool::state::explain(&source, &formatted, tools(), tools()).unwrap();
+    assert!(!report.same_install_requirements);
+    assert_eq!(report.input_file_details.len(), 2);
+    assert!(
+        report
+            .input_file_details
+            .iter()
+            .all(|detail| detail.kind == "json_representation_only")
+    );
+    fs::write(
+        destination.join("package.json"),
+        br#"{"name":"fixture","version":"2.0.0","private":true}"#,
+    )
+    .unwrap();
+    let changed = Package::read(&destination).unwrap();
+    let report = nmpool::state::explain(&source, &changed, tools(), tools()).unwrap();
+    assert!(!report.same_install_requirements);
+    assert!(
+        report
+            .input_file_details
+            .iter()
+            .all(|detail| detail.path != "package.json")
+    );
+}
+
+#[test]
+fn eol_identity_does_not_hide_edits_during_operation_or_change_staged_strings() {
+    let (_temp, root) = scratch();
+    let path = root.join("source");
+    package(&path);
+    fs::write(
+        path.join("package.json"),
+        b"{\r\n\"name\":\"fixture\",\r\n\"description\":\"escaped \\r\\n text\"\r\n}",
+    )
+    .unwrap();
+    let original = Package::read(&path).unwrap();
+    let staged = root.join("staged");
+    original.stage(&staged).unwrap();
+    let staged_bytes = fs::read(staged.join("package.json")).unwrap();
+    assert!(!staged_bytes.contains(&b'\r'));
+    assert!(
+        String::from_utf8(staged_bytes.clone())
+            .unwrap()
+            .contains("\\r\\n")
+    );
+    fs::write(path.join("package.json"), staged_bytes).unwrap();
+    let normalized = Package::read(&path).unwrap();
+    assert_eq!(original.inputs, normalized.inputs);
+    assert!(
+        original
+            .unchanged()
+            .unwrap_err()
+            .to_string()
+            .contains("inputs_changed")
+    );
+}
+
+#[test]
+fn cache_miss_names_requested_key_and_cache_without_creating_an_install() {
+    let (_temp, root) = scratch();
+    let pkg = package(&root.join("package"));
+    let cache = Cache::open(&root.join("cache")).unwrap();
+    let key = tools().key(&pkg.inputs).unwrap();
+    let error = cache.restore(&pkg, tools()).unwrap_err().to_string();
+    assert!(error.contains("cache_miss_or_incomplete"));
+    assert!(error.contains(&key));
+    assert!(error.contains(cache.root.to_str().unwrap()));
+    assert!(!pkg.path.join("node_modules").exists());
+}
+
+fn assert_eol_explanation(source: &Package, consumer: &Package) {
+    let explanation = nmpool::state::explain(source, consumer, tools(), tools()).unwrap();
+    assert!(explanation.same_install_requirements);
+    assert!(explanation.differences.is_empty());
+    assert_eq!(explanation.input_file_details.len(), 2);
+    assert!(
+        explanation
+            .input_file_details
+            .iter()
+            .all(|detail| detail.kind == "line_endings_only")
+    );
+}
+
+fn assert_reverse_eol_restore(root: &Path, crlf: &Package, lf: &Package) {
+    let cache = Cache::open(&root.join("reverse-cache")).unwrap();
+    let prepared = cache.prepare(crlf, tools()).unwrap();
+    let restored = cache.restore(lf, tools()).unwrap();
+    assert_eq!(prepared.key, restored.key);
+    assert!(status_cli(&lf.path).status.success());
+}

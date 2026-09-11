@@ -1,3 +1,4 @@
+pub mod assessment;
 pub mod cache;
 pub mod census;
 pub mod inputs;

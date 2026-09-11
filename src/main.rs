@@ -24,6 +24,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Read-only sharing assessment. Reports blockers without running npm.
+    Assess {
+        #[arg(long)]
+        package: PathBuf,
+    },
+    /// Test write protection in a new disposable fixture, never a live install.
+    ProtectionProbe {
+        /// Existing ordinary directory on the volume to qualify.
+        #[arg(long)]
+        parent: PathBuf,
+    },
     /// Read-only inventory of registered Git worktrees. No npm execution.
     #[command(visible_alias = "scan")]
     Census {
@@ -98,6 +109,16 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<u8> {
     match cli.command {
+        Commands::Assess { package } => {
+            let report = nmpool::assessment::run(&package)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(2)
+        }
+        Commands::ProtectionProbe { parent } => {
+            let report = nmpool::platform::protection::run(&parent)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(result_code(report.qualified_fixture))
+        }
         Commands::Census {
             repo,
             max_depth,

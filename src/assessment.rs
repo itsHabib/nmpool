@@ -33,8 +33,9 @@ pub struct Assessment {
 }
 
 pub fn run(path: &Path) -> Result<Assessment> {
-    platform::plain_path(path)?;
-    let package = fs::canonicalize(path).context("assessment_package_unavailable")?;
+    let path = platform::absolute(path)?;
+    platform::plain_path(&path)?;
+    let package = fs::canonicalize(&path).context("assessment_package_unavailable")?;
     platform::plain_path(&package)?;
     let mut report = Assessment {
         state: "qualification_required",

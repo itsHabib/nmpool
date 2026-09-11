@@ -210,7 +210,9 @@ New versioned records (schema validation rejects unknown major versions):
   at most 16 required probes, qualification references and origin. Cap serialized
   headers at 64 KiB; reject oversize records. Define `artifact_id` as SHA-256 over
   domain `nmpool/shared-artifact/v1` followed by canonical UTF-8 JSON containing
-  only `{schema, request_key, policy_hash, runtime_digest, manifest_digest, origin}`.
+  only `{schema, request_key, policy_hash, runtime_digest, manifest_digest, origin,
+  nonempty, counts, required_probes}`. The bounded probes and counts are part of
+  identity, so their accidental alteration cannot silently weaken attach checks.
   Canonical JSON recursively sorts object keys, has no insignificant whitespace,
   uses UTF-8 string encoding and permits integers only for numeric fields. The
   `artifact_id` field itself, timestamps, paths, qualification references and

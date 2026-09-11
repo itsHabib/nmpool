@@ -34,7 +34,11 @@ pub fn absolute(path: &Path) -> Result<std::path::PathBuf> {
     if path.is_absolute() {
         return Ok(path.to_owned());
     }
-    Ok(std::env::current_dir()?.join(path))
+    let absolute = std::env::current_dir()?.join(path);
+    if !absolute.is_absolute() {
+        bail!("drive_relative_path_unsupported");
+    }
+    Ok(absolute)
 }
 
 pub fn absent(path: &Path) -> Result<()> {

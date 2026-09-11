@@ -100,3 +100,12 @@ they can consume disk space. There is no automatic cleanup. Never point the cach
 an existing dependency tree or an unrelated nonempty directory.
 
 See [design and threat boundary](design.md) and [validation](validation.md).
+
+## Sharing assessment and protection rehearsal
+
+See [sharing qualification](sharing-trial.md) for native Windows commands and the
+work-agent handoff. `assess --package PATH` always exits 2 after a complete report:
+sharing remains unqualified. `protection-probe --parent PATH` creates a disposable
+fixture on the selected volume and exits 0 only if its permission checks pass,
+2 for failed checks, or 1 for a setup/read error. Both emit JSON. Neither changes
+an existing install or enables sharing.

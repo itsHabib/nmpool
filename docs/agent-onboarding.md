@@ -40,6 +40,14 @@ Native Windows examples, checks for command failure, and a timing protocol are i
 ordinary POSIX paths. Quote paths containing spaces. Cache roots and destinations
 must satisfy nmpool's plain-path checks; do not bypass symlink/reparse refusals.
 
+## Assess a sharing workload
+
+For packages outside the private-copy profile, use [sharing qualification](sharing-trial.md).
+`assess --package PATH` reports all discovered blockers without npm execution.
+`protection-probe --parent PATH` tests writes only inside its own disposable fixture.
+Return those reports with the exact tool revision; neither command authorizes
+adoption or proves the application can share dependencies.
+
 ## Paste-ready task prompt
 
 Replace the bracketed values before giving this to an agent:
@@ -95,6 +103,8 @@ contract.
 | `src/tree.rs` | Artifact manifests, hashing and verified private copies. |
 | `src/platform.rs` | Native paths, file identity/copying and atomic publication. |
 | `src/state.rs` | Restoration records, drift reports and requirement comparisons. |
+| `src/assessment.rs` | Read-only package and ancestor assessment for sharing. |
+| `src/platform/protection.rs` | Disposable native consumer write-protection rehearsal. |
 | `src/census.rs` | Bounded inventory of Git worktrees and package candidates. |
 | `tests/contracts.rs` | Behavioral and filesystem regression checks. |
 | `tests/style.rs` | Rust style constraints, including Windows-only source. |

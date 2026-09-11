@@ -221,10 +221,7 @@ fn validate_lock(lock: &Value) -> Result<()> {
         if name.is_empty() {
             continue;
         }
-        if !name.starts_with("node_modules/")
-            || name.split('/').any(|p| p == ".." || p == ".")
-            || name.contains('\\')
-        {
+        if !registry_package_path(name) {
             bail!("local_dependency_unsupported: {name}");
         }
         if package.get("link").and_then(Value::as_bool) == Some(true) {
@@ -472,7 +469,13 @@ fn reject_workspace_manifest(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn validate_registry_url(url: &str, name: &str) -> Result<()> {
+pub(crate) fn registry_package_path(name: &str) -> bool {
+    name.starts_with("node_modules/")
+        && !name.split('/').any(|part| part == ".." || part == ".")
+        && !name.contains('\\')
+}
+
+pub(crate) fn validate_registry_url(url: &str, name: &str) -> Result<()> {
     if !url.starts_with("https://registry.npmjs.org/") || url.contains(['?', '#', '@']) {
         // Scoped packages legitimately contain @ after the host, so validate
         // those below without permitting credentials or other hosts.

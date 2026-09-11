@@ -46,6 +46,8 @@ npm lockfile v3, integrity-pinned public registry dependencies, no install scrip
 or workspaces. Private registries, local/Git dependencies and custom npm configuration
 are unsupported, except project `legacy-peer-deps`.
 
+Working toward sharing? Run the [qualification checks](docs/sharing-trial.md).
+
 Experimental and usable. No general speedup or disk savings are claimed;
 see [validation](docs/validation.md) for results.
 

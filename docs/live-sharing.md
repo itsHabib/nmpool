@@ -79,7 +79,9 @@ nmpool recover --cache /pool --transaction REPLACEMENT_PLAN --plan
 nmpool recover --cache /pool --transaction REPLACEMENT_PLAN --execute
 ```
 
-Recovery checks the original physical identity and full manifest. It only removes
+Recovery checks the original physical identity and full manifest. For a first-time
+attachment, the displayed `remove-attachment` operation removes only that exact
+link and leaves the package without `node_modules`; it does not install a replacement. It only removes
 the transaction's own link and never overwrites a new ordinary install. There is
 no garbage collector. Retained records and failed staging are deliberately kept.
 Power-loss durability and the actual work-laptop application/performance trial

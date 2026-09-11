@@ -118,3 +118,10 @@ Open a focused PR with the problem, behavior and validation evidence. Follow
 [the review process](reviews.md). Hand off the exact commit, completed checks,
 review findings and unresolved limitations; do not merge without maintainer
 authority. Publishing instructions live in [releasing.md](releasing.md).
+
+## Shared installations
+
+Read [live sharing](live-sharing.md) for the opt-in policy, `link`, planned `adopt`,
+qualification and explicit recovery commands. Private-copy behavior is unchanged.
+Keep retained originals and failed staging until reviewed; no GC exists. Record
+what was tested on a native platform versus the actual application workload.

@@ -87,7 +87,11 @@ impl Store {
     pub(super) fn attach(&self, capture: &Capture, artifact: &str, id: &str) -> Result<Attachment> {
         platform::absent(&capture.package.join(RECORD))?;
         let transaction = self.root.join("transactions").join(id);
-        let staging = transaction.join("link");
+        let local_staging = capture.package.join(format!(".nmpool-link-{id}"));
+        platform::plain_path(&local_staging)?;
+        platform::absent(&local_staging)?;
+        fs::create_dir(&local_staging)?;
+        let staging = local_staging.join("link");
         let target = self.artifact(artifact)?.join("tree");
         native::create_link(&target, &staging)?;
         let runtime = capture.package.join(".nmpool-runtime").join(id);

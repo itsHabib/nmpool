@@ -15,6 +15,7 @@ pub struct Plan {
     pub schema: String,
     pub id: String,
     pub operation: String,
+    pub committed: bool,
     pub created_at: Option<u64>,
     pub git_commit: Option<String>,
     pub git_branch: Option<String>,
@@ -46,6 +47,9 @@ impl Store {
         platform::absent(&capture.package.join(RECORD))?;
         let source = capture.package.join("node_modules");
         let source_identity = native::identity(&source)?;
+        if artifact.is_some() {
+            self.check_replacement_volume(&source_identity)?;
+        }
         let manifest = tree::manifest(&source)?;
         super::require_content(&manifest)?;
         capture.ensure_unchanged()?;
@@ -64,6 +68,7 @@ impl Store {
             schema: "nmpool/transaction/v1".into(),
             id: id.clone(),
             operation: operation.into(),
+            committed: false,
             created_at: Some(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?
@@ -115,6 +120,9 @@ impl Store {
             || tree::fingerprint(&tree::manifest(&source)?)? != plan.source_manifest
         {
             bail!("source_changed");
+        }
+        if operation == "replace" {
+            self.check_replacement_volume(&plan.source_identity)?;
         }
         capture.ensure_unchanged()?;
         Ok(plan)
@@ -237,7 +245,8 @@ impl Store {
         if !exists(&self.root.join("transactions").join(id).join("plan.json"))? {
             return self.recover_attachment(id, execute);
         }
-        let plan = self.load_plan(id)?;
+        let mut plan = self.load_plan(id)?;
+        plan.committed = self.transaction_committed(id)?;
         if plan.operation != "replace" {
             bail!("recovery_not_replacement");
         }
@@ -360,6 +369,7 @@ impl Store {
             let name = entry.file_name();
             let id = name.to_str().context("retained_id_invalid")?;
             let mut plan = self.load_plan(id)?;
+            plan.committed = self.transaction_committed(id)?;
             if exists(&self.root.join("transactions").join(id).join("recovered"))? {
                 plan.operation = "recovered".into();
             }
@@ -439,6 +449,7 @@ impl Store {
             schema: "nmpool/transaction/v1".into(),
             id: id.into(),
             operation: "remove-attachment".into(),
+            committed: self.transaction_committed(id)?,
             created_at: None,
             git_commit: None,
             git_branch: None,
@@ -478,4 +489,24 @@ fn git_value(package: &std::path::Path, arguments: &[&str]) -> Option<String> {
     String::from_utf8(output.stdout)
         .ok()
         .map(|value| value.trim().to_owned())
+}
+
+impl Store {
+    fn check_replacement_volume(&self, source: &native::Identity) -> Result<()> {
+        if native::identity(&self.root.join("retained"))?.volume != source.volume {
+            bail!("cross_volume_move_refused");
+        }
+        Ok(())
+    }
+
+    fn transaction_committed(&self, id: &str) -> Result<bool> {
+        let marker = self.root.join("transactions").join(id).join("committed");
+        if !exists(&marker)? {
+            return Ok(false);
+        }
+        if read_bounded(&marker, 64)? != b"committed\n" {
+            bail!("transaction_marker_invalid");
+        }
+        Ok(true)
+    }
 }

@@ -6,10 +6,12 @@ and code map. Read README.md and docs/design.md before changing behavior.
 
 ## Contract
 
-- Every restored install is private. No consumer-to-cache hardlinks or junctions.
+- Private `restore` creates independent files. Shared generations require an explicit
+  island profile and the `link` workflow; never silently weaken private-copy receipts.
 - Default to refusal on unknown provenance, unsupported inputs, incomplete reads,
   pre-existing destinations, reparse points, or ambiguous filesystem identity.
-- No adoption of existing node_modules and no garbage collection in the first release.
+- Adoption and replacement require explicit identity-bound plans. Preserve retained
+  originals and transaction provenance. No garbage collection.
 - Keep native filesystem details in platform.rs; keep CLI and policy separate.
 - Preserve unrelated work. Implement in a secondary worktree.
 - Validate with `python scripts/check.py` (Python 3): formatting, strict Clippy

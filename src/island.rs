@@ -155,7 +155,7 @@ impl Capture {
             .context("island_runtime_command_unknown")?;
         platform::plain_path(runtime)?;
         fs::create_dir_all(runtime)?;
-        self.run_command(package, runtime, command, false)?;
+        self.run_command(package, runtime, command, true)?;
         self.ensure_unchanged()
     }
 

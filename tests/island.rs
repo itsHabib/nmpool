@@ -245,7 +245,7 @@ fn adoption_qualification_replacement_and_recovery_preserve_original_identity() 
     fs::write(&retained_file, "same file count, wrong contents").unwrap();
     assert!(store.recover(&replacement.id, false).is_err());
     fs::write(&retained_file, "module.exports='schema-v1'").unwrap();
-    store.recover(&replacement.id, false).unwrap();
+    assert!(store.recover(&replacement.id, false).unwrap().committed);
     store.recover(&replacement.id, true).unwrap();
     assert_eq!(
         nmpool::platform::shared::identity(&original).unwrap(),
@@ -295,7 +295,12 @@ fn interrupted_first_attachment_is_recoverable_without_changing_the_artifact() {
     )
     .unwrap();
     assert!(store.link(&captured, &artifact).is_err());
-    store.recover(&record.transaction_id, false).unwrap();
+    assert!(
+        !store
+            .recover(&record.transaction_id, false)
+            .unwrap()
+            .committed
+    );
     store.recover(&record.transaction_id, true).unwrap();
     assert!(!package.join("node_modules").exists());
     assert_eq!(nmpool::tree::manifest(&tree).unwrap(), before);
@@ -332,10 +337,44 @@ fn public_cli_prepares_and_links_a_generated_artifact() {
     let temp = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(temp.path()).unwrap();
     let (package, profile) = fixture(&root);
+    let mut runtime_policy = policy();
+    *runtime_policy.get_mut("credential_env").unwrap() = json!(["NMP_TEST_TOKEN"]);
+    *runtime_policy
+        .get_mut("runtime_commands")
+        .unwrap()
+        .get_mut("check")
+        .unwrap()
+        .get_mut("args")
+        .unwrap() = json!([
+        "-e",
+        "if(!process.env.NMP_TEST_TOKEN)process.exit(3);require('fs').writeFileSync(process.argv[1],'private')",
+        "{runtime}/output"
+    ]);
+    fs::write(&profile, serde_json::to_vec(&runtime_policy).unwrap()).unwrap();
     let cache = root.join("cache");
     let package_text = package.to_str().unwrap();
     let profile_text = profile.to_str().unwrap();
     let cache_text = cache.to_str().unwrap();
+    let preview = std::process::Command::new(env!("CARGO_BIN_EXE_nmpool"))
+        .args([
+            "run",
+            "--package",
+            package_text,
+            "--cache",
+            cache_text,
+            "--profile",
+            profile_text,
+            "--tool",
+            "check",
+            "--plan",
+        ])
+        .output()
+        .unwrap();
+    assert!(!preview.status.success());
+    assert!(
+        String::from_utf8_lossy(&preview.stderr).contains("planning_flags_require_link_or_adopt")
+    );
+    assert!(!package.join(".nmpool-runtime").exists());
     let report = cli(&[
         "prepare",
         "--package",
@@ -387,6 +426,7 @@ fn public_cli_prepares_and_links_a_generated_artifact() {
 fn cli(args: &[&str]) -> Value {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_nmpool"))
         .args(args)
+        .env("NMP_TEST_TOKEN", "fixture-token")
         .output()
         .unwrap();
     assert!(
@@ -419,4 +459,36 @@ fn assert_runtime_overlap(first: &Path, second: &Path) {
         serde_json::from_slice(&fs::read(second.join("check/output.times")).unwrap()).unwrap();
     assert!(first.first().unwrap() < second.last().unwrap());
     assert!(second.first().unwrap() < first.last().unwrap());
+}
+
+#[test]
+fn missing_generation_flags_consumers_and_recovery_removes_only_broken_links() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let first_root = root.join("one");
+    let second_root = root.join("two");
+    fs::create_dir(&first_root).unwrap();
+    fs::create_dir(&second_root).unwrap();
+    let (first, profile) = fixture(&first_root);
+    let (second, second_profile) = fixture(&second_root);
+    let captured = capture(&first, &profile);
+    let other = capture(&second, &second_profile);
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let (artifact, _) = store.prepare(&captured).unwrap();
+    let one = store.link(&captured, &artifact).unwrap();
+    let two = store.link(&other, &artifact).unwrap();
+    let guard = store.artifact(&artifact).unwrap();
+    restore_fixture(&guard);
+    fs::remove_dir_all(guard.join("tree")).unwrap();
+    let staging = store.root.join("staging");
+    let preserved = nmpool::tree::manifest(&staging).unwrap();
+    assert!(store.attachment(&first, false).is_err());
+    assert!(store.attachment(&second, false).is_err());
+    store.recover(&one.transaction_id, true).unwrap();
+    store.recover(&two.transaction_id, true).unwrap();
+    assert!(fs::symlink_metadata(first.join("node_modules")).is_err());
+    assert!(fs::symlink_metadata(second.join("node_modules")).is_err());
+    assert_eq!(nmpool::tree::manifest(&staging).unwrap(), preserved);
+    drop(store);
+    restore_fixture(&root);
 }

@@ -15,7 +15,7 @@ use std::{path::PathBuf, process::ExitCode};
 #[derive(Parser)]
 #[command(
     version,
-    about = "Verified private npm install reuse. Existing installs are never replaced."
+    about = "Reuse npm installs with private copies or explicit shared generations."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -203,6 +203,7 @@ fn run(cli: Cli) -> Result<u8> {
         }
         Commands::SharedStatus { args, full } => shared_status(&args, full),
         Commands::Run { args, tool } => {
+            reject_planning(&args)?;
             let capture = shared_capture(&args)?;
             let record =
                 nmpool::shared::Store::open_for_runtime(&args.cache)?.run_tool(&capture, &tool)?;
@@ -342,6 +343,9 @@ fn artifact_argument(args: &SharedArgs) -> Result<&str> {
 }
 
 fn shared_link(args: &SharedArgs) -> Result<u8> {
+    if args.plan_id.is_some() && args.artifact.is_some() {
+        anyhow::bail!("artifact_bound_by_plan");
+    }
     let capture = shared_capture(args)?;
     let store = nmpool::shared::Store::open(&args.cache)?;
     if args.plan {
@@ -358,6 +362,9 @@ fn shared_link(args: &SharedArgs) -> Result<u8> {
 }
 
 fn shared_adopt(args: &SharedArgs) -> Result<u8> {
+    if args.artifact.is_some() {
+        anyhow::bail!("adoption_does_not_select_existing_artifact");
+    }
     let capture = shared_capture(args)?;
     let store = nmpool::shared::Store::open(&args.cache)?;
     if args.plan {
@@ -395,6 +402,7 @@ fn shared_prepare(args: &Install, profile: &std::path::Path) -> Result<u8> {
 }
 
 fn shared_qualify(args: &SharedArgs) -> Result<u8> {
+    reject_planning(args)?;
     let capture = shared_capture(args)?;
     let header =
         nmpool::shared::Store::open(&args.cache)?.qualify(&capture, artifact_argument(args)?)?;
@@ -403,8 +411,16 @@ fn shared_qualify(args: &SharedArgs) -> Result<u8> {
 }
 
 fn shared_status(args: &SharedArgs, full: bool) -> Result<u8> {
+    reject_planning(args)?;
     let capture = shared_capture(args)?;
     let record = nmpool::shared::Store::open(&args.cache)?.status(&capture, full)?;
     println!("{}", serde_json::to_string_pretty(&record)?);
     Ok(2)
+}
+
+fn reject_planning(args: &SharedArgs) -> Result<()> {
+    if args.plan || args.plan_id.is_some() {
+        anyhow::bail!("planning_flags_require_link_or_adopt");
+    }
+    Ok(())
 }

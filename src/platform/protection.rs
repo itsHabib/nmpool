@@ -31,7 +31,8 @@ pub struct Report {
 /// Retains its exclusively owned fixture and reports whether permission restoration succeeded.
 /// Qualification concerns these probes only, not arbitrary same-user permission changes.
 pub fn run(parent: &Path) -> Result<Report> {
-    super::plain_path(parent)?;
+    let parent = super::absolute(parent)?;
+    super::plain_path(&parent)?;
     let parent = dunce::canonicalize(parent)?;
     reject_install_parent(&parent)?;
     if !parent.is_dir() {

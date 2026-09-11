@@ -11,11 +11,11 @@ fn owned_fixture_blocks_mutation_but_preserves_access_and_restores_permissions()
     let parent = dunce::canonicalize(temp.path()).unwrap();
     fs::write(parent.join("unrelated"), b"leave this alone").unwrap();
     let report = protection::run(&parent).unwrap();
-    assert!(report.qualified_fixture, "{report:#?}");
+    assert_eq!(report.qualified_fixture, !is_root(), "{report:#?}");
     assert!(report.read_access);
     assert!(report.execute_access);
     assert_eq!(report.checks.len(), 11);
-    assert!(report.checks.iter().all(|check| check.blocked));
+    assert_eq!(report.checks.iter().all(|check| check.blocked), !is_root());
     assert!(report.cleanup.contains("permissions restored"));
     let root = report.fixture_path.join("guard/artifact");
     fs::write(root.join("child/write"), b"restored permissions").unwrap();
@@ -93,4 +93,16 @@ fn existing_install_parent_is_refused_without_creating_fixture() {
     );
     assert_eq!(fs::read_dir(&parent).unwrap().count(), 1);
     assert_eq!(fs::read(parent.join("unrelated")).unwrap(), b"unchanged");
+}
+
+#[cfg(unix)]
+fn is_root() -> bool {
+    let output = std::process::Command::new("id").arg("-u").output().unwrap();
+    assert!(output.status.success());
+    output.stdout == b"0\n"
+}
+
+#[cfg(not(unix))]
+const fn is_root() -> bool {
+    false
 }

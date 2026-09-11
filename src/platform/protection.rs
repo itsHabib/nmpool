@@ -118,7 +118,7 @@ fn probe_protected(fixture: &Path, root: &Path, alias: &Path) -> Report {
     // A distinct empty protected sibling permits a real removal attempt without
     // mistaking DirectoryNotEmpty for permission enforcement.
     checks.push(check(
-        "remove_artifact_from_parent",
+        "remove_empty_artifact_from_parent",
         fs::remove_dir(root.with_file_name("empty-artifact")),
     ));
     checks.push(Check {
@@ -395,6 +395,15 @@ mod tests {
     #[test]
     fn inaccessible_fixture_reports_unqualified_and_restores_permissions() {
         use std::{fs, os::unix::fs::PermissionsExt};
+        if std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .unwrap()
+            .stdout
+            == b"0\n"
+        {
+            return; // Privileged callers bypass Unix mode-bit denial.
+        }
         let temp = tempfile::tempdir().unwrap();
         let fixture = dunce::canonicalize(temp.path()).unwrap();
         let root = fixture.join("guard/artifact");

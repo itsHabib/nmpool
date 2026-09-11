@@ -1,6 +1,6 @@
 # Shared installs and adoption — Technical Design Document
 
-**Status:** draft for design review; commands below are proposed, not implemented.
+**Status:** implementation authorized; commands below remain proposed until their phase lands.
 **Owner:** @itsHabib · **Date:** 2026-09-10
 **Related:** [#10](https://github.com/itsHabib/nmpool/issues/10),
 [#6](https://github.com/itsHabib/nmpool/issues/6),
@@ -100,17 +100,18 @@ An artifact manifest is immutable metadata. A junction to writable bytes is not
 an immutable dependency tree. Readonly attributes and process convention alone
 must not be described as a security boundary, particularly against the same user.
 
-The first candidate is **managed immutability**: nmpool never changes a published
-generation, users stop installers before attachment, approved commands redirect
-writes, and full audits detect dependency drift. Report `protection=managed`,
-not `immutable=true`. Shared writes remain a blast-radius risk between audits.
-The user must accept that concrete limitation before a real shared trial.
+The first implementation requires **enforced write protection** against ordinary
+consumer writes: file modification, creation, rename and deletion must fail through
+the consumer link, including removal of the artifact root from its parent. Native
+permissions must preserve reads and executable access. Windows readonly attributes
+are insufficient; qualify a DACL boundary on native Windows. A disposable fixture
+must demonstrate denied operations before any production attachment is enabled.
 
-Enforced immutability would require a separately tested filesystem/permission
-boundary denying writes, creates, renames and deletion from consumer processes.
-It is deferred, not claimed by the proposed fast checks. Private copy remains the
-fallback when tools cannot honor managed immutability or stronger isolation is
-required.
+This is protection from accidental writes, not a sandbox against the owning user
+who can deliberately change permissions or ACLs. Metadata identity and structural
+probes still cannot prove arbitrary content integrity. Full audits remain necessary,
+and a failed protection check blocks sharing. Managed convention alone is not an
+accepted fallback; private copy remains available for incompatible tools.
 
 ### A root junction cannot give each worktree its own `.cache`
 
@@ -335,18 +336,18 @@ Mtime, a sentinel and an old audit are not proof of unchanged bytes. Report this
 limitation on every fast result; `--full` supplies a current full observation at
 its measured cost. Known failures are sticky and block fast attach until a full
 successful audit/qualified replacement, not merely until a timestamp changes.
-Managed immutability does not make an audit linearizable against external writers.
+Permissions do not make an audit linearizable against an owner changing those permissions.
 
 ## 9. Staged implementation plan
 
 | Phase | Bounded work | Depends on | Gate |
 |---|---|---|---|
-| 0 | Review this design; capture sanitized actual install recipe, generator closure and commands; compare baseline and runtime writes | None | Agreement on managed-immutability risk and actual island boundary |
-| 1 | Read-only island assessment plus small native Windows junction/identity/crash fixture, no live adoption | 0 | **Validation gate:** cache redirection works in two concurrent consumers; #6 race cannot move a target; otherwise stop root-junction design |
+| 0 | Review this design; capture sanitized actual install recipe, generator closure and commands; compare baseline and runtime writes | None | Enforced protection selected; actual island boundary established |
+| 1 | Read-only island assessment plus native write-protection, junction/identity/crash fixtures; no live adoption | 0 | **Validation gate:** cache redirection works in two concurrent consumers; #6 race cannot move a target; otherwise stop root-junction design |
 | 2 | Versioned policy and artifact receipts; npm v2/private-registry/local attestation; staged approved generation | 1 | Repeatable qualified artifact and Prisma/application checks; copy suite still green |
 | 3 | Opt-in link into absent destinations; structural/full reports; exact consumer records | 2 | Native Windows failure suite and real-machine latency/isolation targets pass |
 | 4 | Planned adopt candidate and promotion; retained provenance; replacement and explicit recovery | 3 | Crash matrix preserves both seed and rollback contents; independent exact-head review |
-| 5 | Optional private facade, enforced protection or cleanup design | Evidence from 4 | Separate proposal; no automatic GC in this program |
+| 5 | Optional private facade or cleanup design | Evidence from 4 | Separate proposal; no automatic GC in this program |
 
 Each phase is several small reviewed PRs, not one flags-and-refactor patch. Only
 phases 0–1 are ready to detail before the validation gate. Sharing/adoption remain
@@ -363,8 +364,8 @@ contract when implementation is admitted, not in this design-only change.
 - Which generator inputs/env/native dependencies complete Prisma's artifact
   identity, and do generated files embed worktree-specific absolute paths?
 - Can controlled generation replace adoption attestation for this workload?
-- Does the operator accept managed immutability's shared blast radius, or must an
-  enforced boundary/private facade qualify before real shared use?
+- Can native enforced protection qualify on the target volume with ordinary user
+  permissions and the actual consumer commands?
 
 ## 11. Validation and issue acceptance
 

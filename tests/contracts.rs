@@ -1036,6 +1036,7 @@ fn autocrlf_worktree_reuses_prepared_entry_and_explains_eol_difference() {
     assert_ne!(source.contents, consumer.contents);
     assert_eq!(source.inputs, consumer.inputs);
     assert_eol_explanation(&source, &consumer);
+    assert_reverse_eol_restore(&root, &consumer, &source);
     let cache = Cache::open(&root.join("cache")).unwrap();
     let prepared = cache.prepare(&source, tools()).unwrap();
     let restored = cache.restore(&consumer, tools()).unwrap();
@@ -1137,4 +1138,12 @@ fn assert_eol_explanation(source: &Package, consumer: &Package) {
             .iter()
             .all(|detail| detail.kind == "line_endings_only")
     );
+}
+
+fn assert_reverse_eol_restore(root: &Path, crlf: &Package, lf: &Package) {
+    let cache = Cache::open(&root.join("reverse-cache")).unwrap();
+    let prepared = cache.prepare(crlf, tools()).unwrap();
+    let restored = cache.restore(lf, tools()).unwrap();
+    assert_eq!(prepared.key, restored.key);
+    assert!(status_cli(&lf.path).status.success());
 }

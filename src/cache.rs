@@ -139,7 +139,7 @@ impl Cache {
         package.stage(&build)?;
         toolchain.install(&build, &staging, package.inputs.legacy_peer_deps)?;
         for (name, bytes) in &package.contents {
-            if fs::read(build.join(name))? != *bytes {
+            if fs::read(build.join(name))? != crate::inputs::keyed_bytes(name, bytes) {
                 bail!("staged_inputs_changed: {name}");
             }
         }

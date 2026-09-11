@@ -50,6 +50,7 @@ impl DestinationLock {
 impl Store {
     pub fn link(&self, capture: &Capture, artifact: &str) -> Result<Attachment> {
         self.reject_package(&capture.package)?;
+        self.ensure_no_pending(capture, None)?;
         let destination_lock = DestinationLock::acquire(&capture.package)?;
         let header = self.read(artifact, false)?;
         match_request(capture, &header)?;
@@ -83,6 +84,7 @@ impl Store {
     }
 
     pub(super) fn attach(&self, capture: &Capture, artifact: &str, id: &str) -> Result<Attachment> {
+        platform::absent(&capture.package.join(RECORD))?;
         let transaction = self.root.join("transactions").join(id);
         let staging = transaction.join("link");
         let target = self.artifact(artifact)?.join("tree");

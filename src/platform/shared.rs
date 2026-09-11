@@ -211,13 +211,19 @@ fn assert_sealed(path: &Path) -> Result<()> {
 fn assert_sealed(path: &Path) -> Result<()> {
     identity(path)?;
     // Evaluate the binary ACL rule masks, not localized icacls output.
-    let script = "$ErrorActionPreference='Stop'; $a=Get-Acl -LiteralPath $env:NMP_SEALED; if(-not $a.AreAccessRulesProtected){exit 2}; $mask=0; foreach($r in $a.Access){if($r.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq 'S-1-1-0' -and $r.AccessControlType -eq 'Deny'){$mask=$mask -bor [int]$r.FileSystemRights}}; if(($mask -band 65878) -ne 65878){exit 3}";
+    let script = "$ErrorActionPreference='Stop'; $a=[System.IO.Directory]::GetAccessControl($env:NMP_SEALED); if(-not $a.AreAccessRulesProtected){exit 2}; $mask=0; foreach($r in $a.Access){if($r.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq 'S-1-1-0' -and $r.AccessControlType -eq 'Deny'){$mask=$mask -bor [int]$r.FileSystemRights}}; if(($mask -band 65878) -ne 65878){exit 3}";
     let output = std::process::Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .env("NMP_SEALED", path)
         .output()?;
-    if !output.status.success() {
+    if matches!(output.status.code(), Some(2 | 3)) {
         bail!("artifact_protection_changed");
+    }
+    if !output.status.success() {
+        bail!(
+            "artifact_protection_unavailable: exit {:?}",
+            output.status.code()
+        );
     }
     Ok(())
 }

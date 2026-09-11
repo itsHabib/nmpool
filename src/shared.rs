@@ -151,7 +151,7 @@ impl Store {
             bail!("artifact_quarantined");
         }
         if let Err(error) = verify_artifact(&artifact, &header, full) {
-            if !quarantine.exists() {
+            if integrity_failure(&error) && !quarantine.exists() {
                 write_new(&quarantine, b"verification_failed\n")?;
             }
             return Err(error);
@@ -211,6 +211,7 @@ fn require_content(manifest: &[tree::Entry]) -> Result<()> {
 fn probe(root: &Path, name: &str) -> Result<Probe> {
     safe_relative(name)?;
     let path = root.join(name);
+    require_present(&path)?;
     let identity = native::identity(&path)?;
     let metadata = fs::metadata(&path)?;
     if !metadata.is_file() || metadata.len() > 1024 * 1024 {
@@ -226,6 +227,7 @@ fn probe(root: &Path, name: &str) -> Result<Probe> {
 
 fn verify_artifact(artifact: &Path, header: &Header, full: bool) -> Result<()> {
     let root = artifact.join("tree");
+    require_present(&root)?;
     if native::identity(&root)? != header.root_identity {
         bail!("artifact_identity_changed");
     }
@@ -305,4 +307,27 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     file.write_all(bytes)?;
     file.sync_all()?;
     Ok(())
+}
+
+fn integrity_failure(error: &anyhow::Error) -> bool {
+    if error.downcast_ref::<std::io::Error>().is_some() {
+        return false;
+    }
+    [
+        "artifact_missing",
+        "artifact_identity_changed",
+        "artifact_probe_changed",
+        "artifact_content_changed",
+        "artifact_protection_changed",
+        "artifact_empty",
+    ]
+    .contains(&error.to_string().as_str())
+}
+
+fn require_present(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => bail!("artifact_missing"),
+        Err(error) => Err(error.into()),
+    }
 }

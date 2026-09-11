@@ -248,3 +248,127 @@ fn stale_adoption_plan_does_not_move_or_accept_changed_source() {
     assert!(store.adopt(&capture, &plan.id).is_err());
     assert_eq!(fs::read(file).unwrap(), b"changed");
 }
+
+#[test]
+fn interrupted_first_attachment_is_recoverable_without_changing_the_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let captured = capture(&package, &profile);
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let (artifact, _) = store.prepare(&captured).unwrap();
+    let record = store.link(&captured, &artifact).unwrap();
+    let tree = store.artifact(&artifact).unwrap().join("tree");
+    let before = nmpool::tree::manifest(&tree).unwrap();
+    // Reproduce the durable state after link publication but before receipt/commit.
+    fs::remove_file(package.join(".nmpool-shared.json")).unwrap();
+    fs::remove_file(
+        store
+            .root
+            .join("transactions")
+            .join(&record.transaction_id)
+            .join("committed"),
+    )
+    .unwrap();
+    assert!(store.link(&captured, &artifact).is_err());
+    store.recover(&record.transaction_id, false).unwrap();
+    store.recover(&record.transaction_id, true).unwrap();
+    assert!(!package.join("node_modules").exists());
+    assert_eq!(nmpool::tree::manifest(&tree).unwrap(), before);
+    store.link(&captured, &artifact).unwrap();
+    remove_consumer_link(&package.join("node_modules"));
+    drop(store);
+    restore_fixture(&root);
+}
+
+#[test]
+fn conflicting_record_at_replacement_execution_preserves_original() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let captured = capture(&package, &profile);
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let (artifact, _) = store.prepare(&captured).unwrap();
+    fs::create_dir(package.join("node_modules")).unwrap();
+    fs::write(package.join("node_modules/seed"), "original").unwrap();
+    let plan = store.plan_replace(&captured, &artifact).unwrap();
+    fs::write(package.join(".nmpool-shared.json"), "unrelated").unwrap();
+    assert!(store.replace(&captured, &plan.id).is_err());
+    assert_eq!(
+        fs::read(package.join("node_modules/seed")).unwrap(),
+        b"original"
+    );
+    assert!(store.retained().unwrap().is_empty());
+    drop(store);
+    restore_fixture(&root);
+}
+
+#[test]
+fn public_cli_prepares_and_links_a_generated_artifact() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let cache = root.join("cache");
+    let package_text = package.to_str().unwrap();
+    let profile_text = profile.to_str().unwrap();
+    let cache_text = cache.to_str().unwrap();
+    let report = cli(&[
+        "prepare",
+        "--package",
+        package_text,
+        "--cache",
+        cache_text,
+        "--profile",
+        profile_text,
+    ]);
+    let artifact = report.get("artifact_id").unwrap().as_str().unwrap();
+    cli(&[
+        "link",
+        "--package",
+        package_text,
+        "--cache",
+        cache_text,
+        "--profile",
+        profile_text,
+        "--artifact",
+        artifact,
+    ]);
+    cli(&[
+        "run",
+        "--package",
+        package_text,
+        "--cache",
+        cache_text,
+        "--profile",
+        profile_text,
+        "--tool",
+        "check",
+    ]);
+    cli(&[
+        "shared-inspect",
+        "--cache",
+        cache_text,
+        "--artifact",
+        artifact,
+        "--full",
+    ]);
+    assert_eq!(
+        fs::read(package.join("node_modules/generated/index.js")).unwrap(),
+        b"module.exports=\"schema-v1\""
+    );
+    remove_consumer_link(&package.join("node_modules"));
+    restore_fixture(&root);
+}
+
+fn cli(args: &[&str]) -> Value {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_nmpool"))
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}

@@ -39,6 +39,7 @@ impl Store {
 
     fn plan(&self, capture: &Capture, artifact: Option<&str>) -> Result<Plan> {
         self.reject_package(&capture.package)?;
+        self.ensure_no_pending(capture, None)?;
         platform::absent(&capture.package.join(RECORD))?;
         let source = capture.package.join("node_modules");
         let source_identity = native::identity(&source)?;
@@ -90,6 +91,8 @@ impl Store {
 
     fn check_plan(&self, capture: &Capture, id: &str, operation: &str) -> Result<Plan> {
         let plan = self.load_plan(id)?;
+        platform::absent(&capture.package.join(RECORD))?;
+        self.ensure_no_pending(capture, Some(id))?;
         self.reject_package(&capture.package)?;
         if plan.operation != operation
             || plan.request_key != capture.request_key
@@ -219,6 +222,10 @@ impl Store {
     }
 
     pub fn recover(&self, id: &str, execute: bool) -> Result<Plan> {
+        validate_id(id)?;
+        if !exists(&self.root.join("transactions").join(id).join("plan.json"))? {
+            return self.recover_attachment(id, execute);
+        }
         let plan = self.load_plan(id)?;
         if plan.operation != "replace" {
             bail!("recovery_not_replacement");
@@ -256,7 +263,7 @@ impl Store {
         }
     }
 
-    fn recover_link(&self, plan: &Plan, execute: bool) -> Result<()> {
+    pub(super) fn recover_link(&self, plan: &Plan, execute: bool) -> Result<()> {
         let path = self
             .root
             .join("transactions")
@@ -272,14 +279,11 @@ impl Store {
         {
             bail!("recovery_destination_changed");
         }
-        let target = self
-            .artifact(
-                plan.artifact_id
-                    .as_deref()
-                    .context("replacement_artifact_missing")?,
-            )?
-            .join("tree");
-        native::verify_link(&link, &target)?;
+        if plan.artifact_id.as_deref() != Some(record.artifact_id.as_str()) {
+            bail!("recovery_artifact_changed");
+        }
+        // The exact no-follow link identity suffices for removal. Its target may
+        // be missing or quarantined; recovery must never require a healthy pool.
         if execute {
             Self::check_own_record(plan, &record)?;
             native::remove_link(&link, &record.link_identity)?;
@@ -288,7 +292,7 @@ impl Store {
         Ok(())
     }
 
-    fn check_own_record(plan: &Plan, record: &Attachment) -> Result<()> {
+    pub(super) fn check_own_record(plan: &Plan, record: &Attachment) -> Result<()> {
         let path = plan.package.join(RECORD);
         match fs::symlink_metadata(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -301,7 +305,7 @@ impl Store {
         Ok(())
     }
 
-    fn remove_own_record(plan: &Plan, record: &Attachment) -> Result<()> {
+    pub(super) fn remove_own_record(plan: &Plan, record: &Attachment) -> Result<()> {
         let path = plan.package.join(RECORD);
         match read_bounded(&path, 65536) {
             Ok(bytes) if bytes == serde_json::to_vec(record)? => {
@@ -321,5 +325,89 @@ impl Store {
             plans.push(self.load_plan(id)?);
         }
         Ok(plans)
+    }
+}
+
+fn exists(path: &std::path::Path) -> Result<bool> {
+    platform::plain_path(path)?;
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+impl Store {
+    pub(super) fn ensure_no_pending(&self, capture: &Capture, except: Option<&str>) -> Result<()> {
+        let identity = native::identity(&capture.package)?;
+        for entry in fs::read_dir(self.root.join("transactions"))? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let id = name.to_str().context("transaction_id_invalid")?;
+            if Some(id) == except {
+                continue;
+            }
+            self.check_pending(id, &identity)?;
+        }
+        Ok(())
+    }
+
+    fn check_pending(&self, id: &str, package: &native::Identity) -> Result<()> {
+        let directory = self.root.join("transactions").join(id);
+        if exists(&directory.join("committed"))? || exists(&directory.join("recovered"))? {
+            return Ok(());
+        }
+        if exists(&directory.join("prepared.json"))? {
+            let record: Attachment =
+                serde_json::from_slice(&read_bounded(&directory.join("prepared.json"), 65536)?)?;
+            if record.package_identity == *package {
+                bail!("transaction_incomplete: {id}");
+            }
+        }
+        if exists(&self.root.join("retained").join(id).join("tree"))?
+            && self.load_plan(id)?.package_identity == *package
+        {
+            bail!("transaction_incomplete: {id}");
+        }
+        Ok(())
+    }
+
+    fn recover_attachment(&self, id: &str, execute: bool) -> Result<Plan> {
+        let directory = self.root.join("transactions").join(id);
+        let record: Attachment =
+            serde_json::from_slice(&read_bounded(&directory.join("prepared.json"), 65536)?)?;
+        if record.schema != "nmpool/attachment/v1" || record.transaction_id != id {
+            bail!("transaction_invalid");
+        }
+        platform::plain_path(&record.package)?;
+        self.reject_package(&record.package)?;
+        let _lock = DestinationLock::acquire(&record.package)?;
+        if native::identity(&record.package)? != record.package_identity {
+            bail!("recovery_package_changed");
+        }
+        let plan = Plan {
+            schema: "nmpool/transaction/v1".into(),
+            id: id.into(),
+            operation: "remove-attachment".into(),
+            package: record.package.clone(),
+            package_identity: record.package_identity.clone(),
+            source_identity: record.link_identity.clone(),
+            request_key: record.request_key.clone(),
+            source_manifest: String::new(),
+            artifact_id: Some(record.artifact_id.clone()),
+        };
+        Self::check_own_record(&plan, &record)?;
+        match fs::symlink_metadata(plan.package.join("node_modules")) {
+            Ok(_) => self.recover_link(&plan, execute)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
+        }
+        if execute {
+            Self::remove_own_record(&plan, &record)?;
+            if !exists(&directory.join("recovered"))? {
+                write_new(&directory.join("recovered"), b"recovered\n")?;
+            }
+        }
+        Ok(plan)
     }
 }

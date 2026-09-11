@@ -13,3 +13,5 @@ pub fn digest(bytes: &[u8]) -> String {
 }
 
 pub mod island;
+
+pub mod shared;

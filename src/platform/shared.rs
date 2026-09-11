@@ -121,3 +121,125 @@ fn native_remove_link(link: &Path, expected: &Identity) -> Result<()> {
 mod windows;
 #[cfg(windows)]
 use windows::{native_identity, native_move, native_remove_link};
+
+/// Seal dependency contents; caller seals the immediate guard after publication.
+/// The owner can explicitly change permissions; this is accidental-write protection.
+#[cfg(unix)]
+pub fn protect_tree(root: &Path) -> Result<()> {
+    identity(root)?;
+    protect_children(root)?;
+    protect_guard(root)
+}
+
+#[cfg(unix)]
+fn protect_children(root: &Path) -> Result<()> {
+    for item in fs::read_dir(root)? {
+        let path = item?.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.is_dir() && !super::is_link(&metadata) {
+            protect_tree(&path)?;
+            continue;
+        }
+        protect_leaf(&path, &metadata)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn protect_leaf(path: &Path, metadata: &fs::Metadata) -> Result<()> {
+    if super::is_link(metadata) {
+        // Unix npm .bin links are not chmod'ed: doing so follows their target.
+        #[cfg(unix)]
+        return Ok(());
+        #[cfg(windows)]
+        bail!("unsupported_reparse_point");
+    }
+    if !metadata.is_file() {
+        bail!("unsupported_file_type");
+    }
+    seal(path, metadata)
+}
+
+pub fn protect_guard(path: &Path) -> Result<()> {
+    identity(path)?;
+    seal(path, &fs::symlink_metadata(path)?)
+}
+
+#[cfg(unix)]
+fn seal(path: &Path, metadata: &fs::Metadata) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = metadata.permissions().mode() & !0o222;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn seal(path: &Path, _metadata: &fs::Metadata) -> Result<()> {
+    let output = std::process::Command::new("icacls.exe")
+        .arg(path)
+        .args([
+            "/inheritance:r",
+            "/grant:r",
+            "*S-1-1-0:(RX)",
+            "/deny",
+            "*S-1-1-0:(WD,AD,WEA,WA,DE,DC)",
+        ])
+        .output()?;
+    if !output.status.success() {
+        bail!("artifact_protection_failed");
+    }
+    Ok(())
+}
+
+/// Bounded root/guard check, not a recursive ACL or content audit.
+pub fn assert_protected(root: &Path) -> Result<()> {
+    assert_sealed(root)?;
+    assert_sealed(root.parent().context("artifact_guard_missing")?)
+}
+
+#[cfg(unix)]
+fn assert_sealed(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    identity(path)?;
+    if fs::metadata(path)?.permissions().mode() & 0o222 != 0 {
+        bail!("artifact_protection_changed");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn assert_sealed(path: &Path) -> Result<()> {
+    identity(path)?;
+    // Evaluate the binary ACL rule masks, not localized icacls output.
+    let script = "$ErrorActionPreference='Stop'; $a=Get-Acl -LiteralPath $env:NMP_SEALED; if(-not $a.AreAccessRulesProtected){exit 2}; $mask=0; foreach($r in $a.Access){if($r.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq 'S-1-1-0' -and $r.AccessControlType -eq 'Deny'){$mask=$mask -bor [int]$r.FileSystemRights}}; if(($mask -band 65878) -ne 65878){exit 3}";
+    let output = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .env("NMP_SEALED", path)
+        .output()?;
+    if !output.status.success() {
+        bail!("artifact_protection_changed");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn protect_tree(root: &Path) -> Result<()> {
+    identity(root)?;
+    let output = std::process::Command::new("icacls.exe")
+        .arg(root)
+        .args([
+            "/inheritance:r",
+            "/grant:r",
+            "*S-1-1-0:(RX)",
+            "/deny",
+            "*S-1-1-0:(WD,AD,WEA,WA,DE,DC)",
+            "/T",
+            "/L",
+            "/Q",
+        ])
+        .output()?;
+    if !output.status.success() {
+        bail!("artifact_protection_failed");
+    }
+    Ok(())
+}

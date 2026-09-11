@@ -112,3 +112,139 @@ fn authoritative_shrinkwrap_cannot_hide_linked_dependencies() {
     fs::write(package.join("npm-shrinkwrap.json"), r#"{"lockfileVersion":3,"packages":{"":{},"node_modules/local":{"link":true,"resolved":"../local"}}}"#).unwrap();
     assert!(Capture::read(&package, &profile, Path::new("node"), None).is_err());
 }
+
+#[test]
+fn two_consumers_share_one_protected_generation_with_private_runtime_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let first_root = root.join("first");
+    let second_root = root.join("second");
+    fs::create_dir(&first_root).unwrap();
+    fs::create_dir(&second_root).unwrap();
+    let (first, profile) = fixture(&first_root);
+    let (second, second_profile) = fixture(&second_root);
+    let capture_one = capture(&first, &profile);
+    let capture_two = capture(&second, &second_profile);
+    assert_eq!(capture_one.request_key, capture_two.request_key);
+    let cache = root.join("cache");
+    let store = nmpool::shared::Store::open(&cache).unwrap();
+    let (id, _) = store.prepare(&capture_one).unwrap();
+    let one = store.link(&capture_one, &id).unwrap();
+    let two = store.link(&capture_two, &id).unwrap();
+    let target = store.artifact(&id).unwrap().join("tree");
+    let before = nmpool::tree::manifest(&target).unwrap();
+    assert!(
+        same_file::is_same_file(
+            first.join("node_modules/generated/index.js"),
+            second.join("node_modules/generated/index.js")
+        )
+        .unwrap()
+    );
+    store.run_tool(&capture_one, "check").unwrap();
+    nmpool::shared::Store::open(&cache)
+        .unwrap()
+        .run_tool(&capture_two, "check")
+        .unwrap();
+    assert_ne!(one.runtime, two.runtime);
+    assert_eq!(
+        fs::read(one.runtime.join("check/output")).unwrap(),
+        b"private"
+    );
+    assert_eq!(
+        fs::read(two.runtime.join("check/output")).unwrap(),
+        b"private"
+    );
+    assert_eq!(nmpool::tree::manifest(&target).unwrap(), before);
+    assert!(fs::write(first.join("node_modules/generated/new"), "write").is_err());
+    remove_consumer_link(&first.join("node_modules"));
+    remove_consumer_link(&second.join("node_modules"));
+    restore_fixture(&root);
+}
+
+fn remove_consumer_link(path: &Path) {
+    let id = nmpool::platform::shared::link_identity(path).unwrap();
+    nmpool::platform::shared::remove_link(path, &id).unwrap();
+}
+
+#[cfg(unix)]
+fn restore_fixture(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = fs::symlink_metadata(path).unwrap();
+    if metadata.file_type().is_symlink() {
+        return;
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    if metadata.is_dir() {
+        for item in fs::read_dir(path).unwrap() {
+            restore_fixture(&item.unwrap().path());
+        }
+    }
+}
+
+#[cfg(windows)]
+fn restore_fixture(path: &Path) {
+    assert!(
+        std::process::Command::new("icacls.exe")
+            .arg(path)
+            .args(["/reset", "/T", "/L", "/Q"])
+            .status()
+            .unwrap()
+            .success()
+    );
+}
+
+#[test]
+fn adoption_qualification_replacement_and_recovery_preserve_original_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let capture = capture(&package, &profile);
+    let original = package.join("node_modules");
+    fs::create_dir_all(original.join("generated")).unwrap();
+    fs::write(
+        original.join("generated/index.js"),
+        "module.exports='schema-v1'",
+    )
+    .unwrap();
+    let original_id = nmpool::platform::shared::identity(&original).unwrap();
+    let before = nmpool::tree::manifest(&original).unwrap();
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let plan = store.plan_adopt(&capture).unwrap();
+    let (artifact, _) = store.adopt(&capture, &plan.id).unwrap();
+    assert_eq!(
+        nmpool::platform::shared::identity(&original).unwrap(),
+        original_id
+    );
+    assert_eq!(nmpool::tree::manifest(&original).unwrap(), before);
+    assert!(store.plan_replace(&capture, &artifact).is_err());
+    store.qualify(&capture, &artifact).unwrap();
+    let replacement = store.plan_replace(&capture, &artifact).unwrap();
+    store.replace(&capture, &replacement.id).unwrap();
+    assert!(nmpool::platform::shared::link_identity(&original).is_ok());
+    assert_eq!(store.retained().unwrap().len(), 1);
+    store.recover(&replacement.id, false).unwrap();
+    store.recover(&replacement.id, true).unwrap();
+    assert_eq!(
+        nmpool::platform::shared::identity(&original).unwrap(),
+        original_id
+    );
+    assert_eq!(nmpool::tree::manifest(&original).unwrap(), before);
+    drop(store);
+    restore_fixture(&root);
+}
+
+#[test]
+fn stale_adoption_plan_does_not_move_or_accept_changed_source() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let capture = capture(&package, &profile);
+    fs::create_dir_all(package.join("node_modules/generated")).unwrap();
+    let file = package.join("node_modules/generated/index.js");
+    fs::write(&file, "module.exports='schema-v1'").unwrap();
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let plan = store.plan_adopt(&capture).unwrap();
+    fs::write(&file, "changed").unwrap();
+    assert!(store.adopt(&capture, &plan.id).is_err());
+    assert_eq!(fs::read(file).unwrap(), b"changed");
+}

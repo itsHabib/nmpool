@@ -39,8 +39,9 @@ inputs and Node/npm versions on the same machine.
 ## Supported scope
 
 The intended tool supports private copies and shared `node_modules` across worktrees.
-Today only private copy mode is implemented. Sharing, adoption and generator-aware
-installs are being designed in the [share/adopt proposal](docs/features/share-adopt/spec.md).
+Opt-in sharing, adoption and generator-aware installs are implemented on this
+experimental branch; see [shared installs](docs/live-sharing.md) for the explicit
+policy and commands. Native validation and review are required before release.
 
 npm lockfile v3, integrity-pinned public registry dependencies, no install scripts
 or workspaces. Private registries, local/Git dependencies and custom npm configuration

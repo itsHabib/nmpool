@@ -1,0 +1,22 @@
+{
+  "schema": "nmpool/island/v1",
+  "independent_npm_island": true,
+  "acknowledge_unsandboxed_scripts": true,
+  "trust_domain": "replace-with-your-registry-domain-name",
+  "allow_local_attestation": true,
+  "generator_inputs": ["prisma/schema.prisma"],
+  "context_inputs": [],
+  "required_probes": [".prisma/client/index.js"],
+  "build_commands": [
+    {"program": "npm", "args": ["ci", "--audit=false", "--fund=false"], "env": {}},
+    {"program": "npm", "args": ["run", "generate"], "env": {}}
+  ],
+  "validation_commands": [
+    {"program": "npm", "args": ["run", "test:dependencies"], "env": {}}
+  ],
+  "runtime_commands": {
+    "check": {"program": "npm", "args": ["run", "test:dependencies"], "env": {"APP_CACHE_DIR": "{runtime}"}}
+  },
+  "selected_env": [],
+  "credential_env": []
+}

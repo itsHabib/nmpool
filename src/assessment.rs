@@ -1,6 +1,6 @@
 //! Read-only qualification inventory. No result authorizes shared materialization.
 //! Reads are bounded observations under exclusive ownership, not atomic snapshots.
-use crate::platform;
+use crate::{inputs, platform};
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use serde_json::Value;
@@ -108,16 +108,18 @@ fn inspect_lock(package: &Path, report: &mut Assessment) -> Result<()> {
     match packages {
         Some(packages) => packages
             .iter()
-            .filter(|(name, _)| !name.is_empty())
-            .for_each(|(_, value)| inspect_dependency(value, report)),
+            .for_each(|(name, value)| inspect_dependency(name, value, report)),
         None => report.blockers.push("lock_packages_unavailable"),
     }
     Ok(())
 }
 
-fn inspect_dependency(value: &Value, report: &mut Assessment) {
+fn inspect_dependency(name: &str, value: &Value, report: &mut Assessment) {
     if value.get("hasInstallScript").and_then(Value::as_bool) == Some(true) || has_scripts(value) {
         report.lifecycle_packages += 1;
+    }
+    if name.is_empty() {
+        return;
     }
     if value
         .get("integrity")
@@ -132,7 +134,7 @@ fn inspect_dependency(value: &Value, report: &mut Assessment) {
 }
 
 fn public_registry(url: Option<&str>) -> bool {
-    url.is_some_and(|value| value.starts_with("https://registry.npmjs.org/"))
+    url.is_some_and(|value| inputs::validate_registry_url(value, "redacted").is_ok())
 }
 
 fn has_scripts(value: &Value) -> bool {

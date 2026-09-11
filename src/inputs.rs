@@ -472,7 +472,7 @@ fn reject_workspace_manifest(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn validate_registry_url(url: &str, name: &str) -> Result<()> {
+pub(crate) fn validate_registry_url(url: &str, name: &str) -> Result<()> {
     if !url.starts_with("https://registry.npmjs.org/") || url.contains(['?', '#', '@']) {
         // Scoped packages legitimately contain @ after the host, so validate
         // those below without permitting credentials or other hosts.

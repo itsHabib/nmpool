@@ -243,3 +243,52 @@ fn sha512_prefix_matches_current_profile_without_claiming_sri_validation() {
             .contains(&"local_artifact_attestation_required")
     );
 }
+
+#[test]
+fn root_implicit_install_script_requires_qualification_without_origin_gaps() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    write(&root.join("package.json"), "{}");
+    write(
+        &root.join("package-lock.json"),
+        r#"{"lockfileVersion":3,"packages":{"":{"hasInstallScript":true}}}"#,
+    );
+    let report = assessment::run(&root).unwrap();
+    assert_eq!(report.lifecycle_packages, 1);
+    assert!(
+        report
+            .blockers
+            .contains(&"lifecycle_scripts_require_qualification")
+    );
+    assert_eq!(report.integrity_gap_packages, 0);
+    assert_eq!(report.nonpublic_or_unresolved_packages, 0);
+}
+
+#[test]
+fn public_registry_urls_follow_prepare_validation() {
+    let unsafe_urls = [
+        "https://registry.npmjs.org/pkg/-/pkg.tgz?token=SECRET",
+        "https://registry.npmjs.org/pkg/-/pkg.tgz#SECRET",
+        "https://registry.npmjs.org/pkg/@SECRET/pkg.tgz",
+        "https://SECRET@registry.npmjs.org/pkg/-/pkg.tgz",
+        "https://registry.npmjs.org.evil.invalid/pkg.tgz",
+        "https://registry.npmjs.org/@scope/pkg/-/pkg.tgz?SECRET",
+        "https://registry.npmjs.org/@scope/pkg/-/pkg.tgz#SECRET",
+    ];
+    for url in unsafe_urls {
+        check_registry_count(url, 1);
+    }
+    check_registry_count("https://registry.npmjs.org/pkg/-/pkg.tgz", 0);
+    check_registry_count("https://registry.npmjs.org/@scope/pkg/-/pkg.tgz", 0);
+}
+
+fn check_registry_count(url: &str, count: usize) {
+    let report =
+        assess_dependency(&serde_json::json!({"resolved": url, "integrity": "sha512-example"}));
+    assert_eq!(report.nonpublic_or_unresolved_packages, count);
+    assert_eq!(
+        report.blockers.contains(&"registry_provenance_required"),
+        count > 0
+    );
+    assert!(!serde_json::to_string(&report).unwrap().contains("SECRET"));
+}

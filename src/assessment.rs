@@ -16,7 +16,8 @@ pub struct Assessment {
     pub blockers: Vec<&'static str>,
     pub lockfile_version: Option<u64>,
     pub lifecycle_packages: usize,
-    pub missing_integrity_packages: usize,
+    /// Packages failing the current SHA-512 prefix gate; not full SRI validation.
+    pub integrity_gap_packages: usize,
     pub nonpublic_or_unresolved_packages: usize,
     pub pnpm_workspace_files: usize,
     pub workspace_manifests: usize,
@@ -39,7 +40,7 @@ pub fn run(path: &Path) -> Result<Assessment> {
         ],
         lockfile_version: None,
         lifecycle_packages: 0,
-        missing_integrity_packages: 0,
+        integrity_gap_packages: 0,
         nonpublic_or_unresolved_packages: 0,
         pnpm_workspace_files: 0,
         workspace_manifests: 0,
@@ -121,9 +122,9 @@ fn inspect_dependency(value: &Value, report: &mut Assessment) {
     if value
         .get("integrity")
         .and_then(Value::as_str)
-        .is_none_or(str::is_empty)
+        .is_none_or(|integrity| !integrity.starts_with("sha512-"))
     {
-        report.missing_integrity_packages += 1;
+        report.integrity_gap_packages += 1;
     }
     if !public_registry(value.get("resolved").and_then(Value::as_str)) {
         report.nonpublic_or_unresolved_packages += 1;
@@ -136,9 +137,17 @@ fn public_registry(url: Option<&str>) -> bool {
 
 fn has_scripts(value: &Value) -> bool {
     let scripts = value.get("scripts");
-    ["preinstall", "install", "postinstall", "prepare"]
-        .iter()
-        .any(|name| scripts.and_then(|scripts| scripts.get(name)).is_some())
+    [
+        "preinstall",
+        "install",
+        "postinstall",
+        "prepare",
+        "prepublish",
+        "preprepare",
+        "postprepare",
+    ]
+    .iter()
+    .any(|name| scripts.and_then(|scripts| scripts.get(name)).is_some())
 }
 
 fn inspect_ancestors(package: &Path, report: &mut Assessment) -> Result<()> {
@@ -230,7 +239,7 @@ fn add_blockers(report: &mut Assessment) {
             "lifecycle_scripts_require_qualification",
         ),
         (
-            report.missing_integrity_packages > 0,
+            report.integrity_gap_packages > 0,
             "local_artifact_attestation_required",
         ),
         (

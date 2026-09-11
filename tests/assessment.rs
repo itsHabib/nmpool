@@ -55,7 +55,7 @@ fn check_mixed_counts(report: &assessment::Assessment) {
     assert_eq!(report.state, "qualification_required");
     assert_eq!(report.lockfile_version, Some(2));
     assert_eq!(report.lifecycle_packages, 1);
-    assert_eq!(report.missing_integrity_packages, 1);
+    assert_eq!(report.integrity_gap_packages, 1);
     assert_eq!(report.nonpublic_or_unresolved_packages, 1);
     assert_eq!(report.pnpm_workspace_files, 1);
     assert_eq!(report.workspace_manifests, 1);
@@ -140,5 +140,106 @@ fn missing_and_nonobject_package_manifests_are_reported() {
             .unwrap()
             .blockers
             .contains(&"runtime_write_routing_requires_qualification")
+    );
+}
+
+const INSTALL_HOOKS: [&str; 7] = [
+    "preinstall",
+    "install",
+    "postinstall",
+    "prepare",
+    "prepublish",
+    "preprepare",
+    "postprepare",
+];
+
+#[test]
+fn every_install_hook_is_detected_in_package_manifests() {
+    for hook in INSTALL_HOOKS {
+        check_manifest_hook(hook, "package.json");
+    }
+}
+
+#[test]
+fn every_install_hook_is_detected_in_ancestor_manifests() {
+    for hook in INSTALL_HOOKS {
+        check_manifest_hook(hook, "../package.json");
+    }
+}
+
+fn check_manifest_hook(hook: &str, manifest_name: &str) {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let package = root.join("package");
+    fs::create_dir(&package).unwrap();
+    let manifest_path = package.join(manifest_name);
+    let manifest = serde_json::json!({"scripts": {hook: "secret-command"}});
+    write(&manifest_path, &manifest.to_string());
+    let report = assessment::run(&package).unwrap();
+    assert!(
+        report
+            .blockers
+            .contains(&"ancestor_or_package_lifecycle_scripts"),
+        "missing {hook}"
+    );
+    assert!(
+        !serde_json::to_string(&report)
+            .unwrap()
+            .contains("secret-command")
+    );
+}
+
+#[test]
+fn every_install_hook_is_detected_in_locked_package_metadata() {
+    for hook in INSTALL_HOOKS {
+        let report = assess_dependency(&serde_json::json!({"scripts": {hook: "secret-command"}}));
+        assert_eq!(report.lifecycle_packages, 1, "missing {hook}");
+        assert!(
+            report
+                .blockers
+                .contains(&"lifecycle_scripts_require_qualification")
+        );
+    }
+}
+
+fn assess_dependency(dependency: &serde_json::Value) -> assessment::Assessment {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    write(&root.join("package.json"), "{}");
+    let lock =
+        serde_json::json!({"lockfileVersion": 3, "packages": {"node_modules/a": dependency}});
+    write(&root.join("package-lock.json"), &lock.to_string());
+    assessment::run(&root).unwrap()
+}
+
+#[test]
+fn integrity_gaps_include_missing_weak_and_malformed_fields() {
+    let cases = [
+        serde_json::json!({}),
+        serde_json::json!({"integrity": "sha1-example"}),
+        serde_json::json!({"integrity": "garbage"}),
+        serde_json::json!({"integrity": ""}),
+        serde_json::json!({"integrity": 12}),
+    ];
+    for case in cases {
+        let report = assess_dependency(&case);
+        assert_eq!(report.integrity_gap_packages, 1);
+        assert!(
+            report
+                .blockers
+                .contains(&"local_artifact_attestation_required")
+        );
+    }
+}
+
+#[test]
+fn sha512_prefix_matches_current_profile_without_claiming_sri_validation() {
+    let report = assess_dependency(&serde_json::json!({"integrity": "sha512-example"}));
+    assert_eq!(report.integrity_gap_packages, 0);
+    assert_eq!(report.state, "qualification_required");
+    assert!(
+        !report
+            .blockers
+            .contains(&"local_artifact_attestation_required")
     );
 }

@@ -15,6 +15,7 @@ pub struct Assessment {
     pub state: &'static str,
     pub blockers: Vec<&'static str>,
     pub lockfile_version: Option<u64>,
+    pub lockfile_source: Option<&'static str>,
     pub lifecycle_packages: usize,
     /// Packages failing the current SHA-512 prefix gate; not full SRI validation.
     pub integrity_gap_packages: usize,
@@ -43,6 +44,7 @@ pub fn run(path: &Path) -> Result<Assessment> {
             "runtime_write_routing_requires_qualification",
         ],
         lockfile_version: None,
+        lockfile_source: None,
         lifecycle_packages: 0,
         integrity_gap_packages: 0,
         nonpublic_or_unresolved_packages: 0,
@@ -134,8 +136,7 @@ fn inspect_package(package: &Path, report: &mut Assessment) -> Result<()> {
 }
 
 fn inspect_lock(package: &Path, report: &mut Assessment) -> Result<()> {
-    let lock =
-        json_optional(&package.join("package-lock.json"), LOCK_LIMIT)?.unwrap_or(Value::Null);
+    let lock = read_lock(package, report)?;
     report.lockfile_version = lock.get("lockfileVersion").and_then(Value::as_u64);
     let packages = lock.get("packages").and_then(Value::as_object);
     match packages {
@@ -143,6 +144,17 @@ fn inspect_lock(package: &Path, report: &mut Assessment) -> Result<()> {
         None => report.blockers.push("lock_packages_unavailable"),
     }
     Ok(())
+}
+
+fn read_lock(package: &Path, report: &mut Assessment) -> Result<Value> {
+    // npm-shrinkwrap takes precedence; invalid or unreadable input never falls back.
+    for name in ["npm-shrinkwrap.json", "package-lock.json"] {
+        if let Some(lock) = json_optional(&package.join(name), LOCK_LIMIT)? {
+            report.lockfile_source = Some(name);
+            return Ok(lock);
+        }
+    }
+    Ok(Value::Null)
 }
 
 fn inspect_packages(packages: &serde_json::Map<String, Value>, report: &mut Assessment) {

@@ -109,3 +109,9 @@ sharing remains unqualified. `protection-probe --parent PATH` creates a disposab
 fixture on the selected volume and exits 0 only if its permission checks pass,
 2 for failed checks, or 1 for a setup/read error. Both emit JSON. Neither changes
 an existing install or enables sharing.
+
+Assessment reports `lockfile_source`: package-local `npm-shrinkwrap.json` takes
+precedence over `package-lock.json`, or null if neither exists. Selected lockfiles
+use bounded, guarded JSON reads; unreadable or invalid shrinkwrap never falls back
+to package-lock. Shrinkwrap remains unsupported by private-copy preparation and
+retains its qualification blocker.

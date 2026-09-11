@@ -160,6 +160,10 @@ impl Store {
         let header: Header =
             serde_json::from_slice(&read_bounded(&artifact.join("header.json"), HEADER_LIMIT)?)?;
         if header.schema != SCHEMA
+            || header
+                .provenance_digest
+                .as_deref()
+                .is_none_or(|digest| validate_id(digest).is_err())
             || !["controlled-build", "local-attestation"].contains(&header.origin.as_str())
             || header_id(&header)? != id
             || !header.nonempty
@@ -412,10 +416,7 @@ impl Store {
     pub fn open_for_runtime(cache: &Path) -> Result<Self> {
         loop {
             let result = Self::open(cache);
-            if result
-                .as_ref()
-                .is_err_and(|error| error.to_string().starts_with("cache_busy:"))
-            {
+            if result.as_ref().is_err_and(cache_lock_contended) {
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 continue;
             }
@@ -464,4 +465,25 @@ fn cleanup_warning(path: &Path) -> Option<String> {
             path.display()
         )
     })
+}
+
+fn cache_lock_contended(error: &anyhow::Error) -> bool {
+    error.to_string().starts_with("cache_busy:")
+        && error
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|source| {
+                source.raw_os_error() == fs2::lock_contended_error().raw_os_error()
+            })
+}
+
+#[cfg(test)]
+mod lock_tests {
+    #[test]
+    fn only_real_lock_contention_is_retried() {
+        let busy = anyhow::Error::new(fs2::lock_contended_error()).context("cache_busy: held");
+        assert!(super::cache_lock_contended(&busy));
+        let unsupported = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::Unsupported))
+            .context("cache_busy: unsupported");
+        assert!(!super::cache_lock_contended(&unsupported));
+    }
 }

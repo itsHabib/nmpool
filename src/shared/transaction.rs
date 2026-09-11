@@ -580,7 +580,7 @@ impl Store {
         Ok(())
     }
 
-    fn transaction_committed(&self, id: &str) -> Result<bool> {
+    pub(super) fn transaction_committed(&self, id: &str) -> Result<bool> {
         let marker = self.root.join("transactions").join(id).join("committed");
         if !exists(&marker)? {
             return Ok(false);

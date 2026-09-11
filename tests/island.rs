@@ -872,3 +872,60 @@ fn cleanup_failure_reports_the_successfully_published_artifact() {
     drop(store);
     restore_fixture(&root);
 }
+
+#[test]
+#[allow(
+    clippy::literal_string_with_formatting_args,
+    reason = "Fixture uses npm environment placeholders"
+)]
+fn credential_registry_must_be_explicitly_admitted() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let mut value = policy();
+    *value.get_mut("credential_env").unwrap() = json!(["NMP_TEST_TOKEN"]);
+    fs::write(&profile, serde_json::to_vec(&value).unwrap()).unwrap();
+    fs::write(
+        package.join(".npmrc"),
+        "//unreviewed.example.test/:_authToken=${NMP_TEST_TOKEN}\n",
+    )
+    .unwrap();
+    let error = Capture::read(&package, &profile, Path::new("node"), None)
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("island_registry_host_not_admitted")
+    );
+    fs::write(
+        package.join(".npmrc"),
+        "//packages.example.test/:_authToken=${NMP_TEST_TOKEN}\n",
+    )
+    .unwrap();
+    capture(&package, &profile);
+}
+
+#[test]
+fn corrupt_commit_marker_is_not_a_committed_attachment() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let captured = capture(&package, &profile);
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let (artifact, _) = store.prepare(&captured).unwrap();
+    let attached = store.link(&captured, &artifact).unwrap();
+    let marker = store
+        .root
+        .join("transactions")
+        .join(&attached.transaction_id)
+        .join("committed");
+    fs::write(&marker, b"broken\n").unwrap();
+    let error = store.status(&captured, false).unwrap_err();
+    assert!(error.to_string().contains("transaction_marker_invalid"));
+    fs::write(marker, b"committed\n").unwrap();
+    store.status(&captured, false).unwrap();
+    remove_consumer_link(&package.join("node_modules"));
+    drop(store);
+    restore_fixture(&root);
+}

@@ -135,14 +135,9 @@ impl Store {
         {
             bail!("attachment_identity_changed");
         }
-        read_bounded(
-            &self
-                .root
-                .join("transactions")
-                .join(&record.transaction_id)
-                .join("committed"),
-            64,
-        )?;
+        if !self.transaction_committed(&record.transaction_id)? {
+            bail!("attachment_not_committed");
+        }
         let header = self.read(&record.artifact_id, full)?;
         if header.request_key != record.request_key {
             bail!("request_mismatch");

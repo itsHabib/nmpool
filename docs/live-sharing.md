@@ -45,7 +45,11 @@ nmpool shared-inspect --cache /pool --artifact ARTIFACT_ID --full
 `link` creates a junction on Windows or symlink on macOS. It requires matching
 policy, input and runtime identity and an absent destination. Repeating a matching
 attachment validates it before returning. Dependencies are protected against
-ordinary writes; an owner can deliberately change permissions. Each runtime tool
+ordinary writes through the dependency tree, including its immediate guard. This
+is not a sandbox: programs running as the pool owner can edit writable store
+ancestors or deliberately change permissions. Do not grant untrusted code access
+to that account or pool. Moving the pool makes attachments invalid; it does not
+redirect or silently repair them. Each runtime tool
 gets a separate `.nmpool-runtime/<attachment>/<tool>` directory. `{runtime}` in
 approved arguments or environment values expands to that directory. A tool that
 cannot redirect writes outside `node_modules` is incompatible with this strategy.

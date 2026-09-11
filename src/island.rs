@@ -611,7 +611,11 @@ fn validate_config_line(line: &str, policy: &Policy) -> Result<()> {
         return validate_config_registry(value, policy);
     }
     if key.ends_with(":_authToken") && declared_placeholder(value, &policy.credential_env) {
-        return Ok(());
+        let scope = key
+            .strip_prefix("//")
+            .and_then(|key| key.strip_suffix(":_authToken"))
+            .context("island_auth_registry_scope")?;
+        return provenance::admitted_registry(&format!("https://{scope}"), policy);
     }
     bail!("island_npmrc_setting");
 }

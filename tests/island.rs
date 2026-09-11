@@ -234,6 +234,14 @@ fn adoption_qualification_replacement_and_recovery_preserve_original_identity() 
     store.replace(&capture, &replacement.id).unwrap();
     assert!(nmpool::platform::shared::link_identity(&original).is_ok());
     assert_eq!(store.retained().unwrap().len(), 1);
+    let retained_file = store
+        .root
+        .join("retained")
+        .join(&replacement.id)
+        .join("tree/generated/index.js");
+    fs::write(&retained_file, "same file count, wrong contents").unwrap();
+    assert!(store.recover(&replacement.id, false).is_err());
+    fs::write(&retained_file, "module.exports='schema-v1'").unwrap();
     store.recover(&replacement.id, false).unwrap();
     store.recover(&replacement.id, true).unwrap();
     assert_eq!(

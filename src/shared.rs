@@ -324,7 +324,8 @@ fn integrity_failure(error: &anyhow::Error) -> bool {
         "artifact_protection_changed",
         "artifact_empty",
     ]
-    .contains(&error.to_string().as_str())
+    .iter()
+    .any(|code| error.chain().any(|cause| cause.to_string() == *code))
 }
 
 fn require_present(path: &Path) -> Result<()> {

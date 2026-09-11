@@ -38,7 +38,9 @@ from the requirements and sanitized reproductions.
 ## 2. Requirements
 
 - Retain `prepare` and private `restore`; existing copy receipts and caches remain
-  readable without silently acquiring weaker verification semantics.
+  governed by their recorded schema without silently acquiring weaker verification
+  semantics. #9 moves the current input schema to v2; v1 entries are preserved but
+  require the older binary for inspection and fresh preparation for current use.
 - Add explicit share and adoption profiles for a qualified installation island.
   An island is a declared package/install boundary, not merely a directory with a
   matching lockfile. No automatic exemption for all packages in a monorepo.
@@ -85,7 +87,7 @@ land. All new native identity, junction and no-follow move primitives stay in
 `platform.rs`; existing `plain_path` must not become globally permissive.
 
 Copy continues to use the existing full verification path. Share entries live in
-an explicitly versioned store namespace; v1 entries cannot be attached merely
+an explicitly versioned store namespace; copy entries cannot be attached merely
 because their receipt parses. New profiles require new qualified receipts.
 
 ## 4. Decisions and trade-offs

@@ -421,3 +421,21 @@ fn linked_pnp_marker_refuses_without_following() {
     std::os::unix::fs::symlink(root.join("missing"), root.join(".pnp.cjs")).unwrap();
     assert!(assessment::run(&root).is_err());
 }
+
+#[test]
+fn ancestor_alternative_lock_is_reported_without_reading_contents() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let package = root.join("nested/package");
+    fs::create_dir_all(&package).unwrap();
+    write(&root.join("yarn.lock"), "SECRET");
+    write(&package.join("package.json"), "{}");
+    let report = assessment::run(&package).unwrap();
+    assert_eq!(report.alternative_lockfiles, 1);
+    assert!(
+        report
+            .blockers
+            .contains(&"alternative_lockfile_requires_qualification")
+    );
+    assert!(!serde_json::to_string(&report).unwrap().contains("SECRET"));
+}

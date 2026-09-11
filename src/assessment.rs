@@ -59,7 +59,6 @@ pub fn run(path: &Path) -> Result<Assessment> {
         prisma_schema_present: false,
     };
     inspect_package(&package, &mut report)?;
-    inspect_alternative_locks(&package, &mut report)?;
     inspect_lock(&package, &mut report)?;
     inspect_ancestors(&package, &mut report)?;
     report.prisma_schema_present =
@@ -209,6 +208,7 @@ fn inspect_ancestors(package: &Path, report: &mut Assessment) -> Result<()> {
 }
 
 fn inspect_ancestor(path: &Path, report: &mut Assessment) -> Result<()> {
+    inspect_alternative_locks(path, report)?;
     if marker_present(&path.join("pnpm-workspace.yaml"))? {
         report.pnpm_workspace_files += 1;
     }

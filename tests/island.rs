@@ -225,6 +225,15 @@ fn adoption_qualification_replacement_and_recovery_preserve_original_identity() 
     let before = nmpool::tree::manifest(&original).unwrap();
     let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
     let plan = store.plan_adopt(&capture).unwrap();
+    // A v1 plan written before recovery gained its derived committed display field.
+    let plan_path = store
+        .root
+        .join("transactions")
+        .join(&plan.id)
+        .join("plan.json");
+    let mut legacy: Value = serde_json::from_slice(&fs::read(&plan_path).unwrap()).unwrap();
+    legacy.as_object_mut().unwrap().remove("committed");
+    fs::write(&plan_path, serde_json::to_vec(&legacy).unwrap()).unwrap();
     let (artifact, _) = store.adopt(&capture, &plan.id).unwrap();
     assert_eq!(
         nmpool::platform::shared::identity(&original).unwrap(),
@@ -233,6 +242,7 @@ fn adoption_qualification_replacement_and_recovery_preserve_original_identity() 
     assert_eq!(nmpool::tree::manifest(&original).unwrap(), before);
     assert!(store.plan_replace(&capture, &artifact).is_err());
     store.qualify(&capture, &artifact).unwrap();
+    assert_no_staging(&store);
     let replacement = store.plan_replace(&capture, &artifact).unwrap();
     store.replace(&capture, &replacement.id).unwrap();
     assert!(nmpool::platform::shared::link_identity(&original).is_ok());
@@ -280,6 +290,7 @@ fn interrupted_first_attachment_is_recoverable_without_changing_the_artifact() {
     let captured = capture(&package, &profile);
     let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
     let (artifact, _) = store.prepare(&captured).unwrap();
+    assert_no_staging(&store);
     let record = store.link(&captured, &artifact).unwrap();
     let tree = store.artifact(&artifact).unwrap().join("tree");
     let before = nmpool::tree::manifest(&tree).unwrap();
@@ -489,6 +500,142 @@ fn missing_generation_flags_consumers_and_recovery_removes_only_broken_links() {
     assert!(fs::symlink_metadata(first.join("node_modules")).is_err());
     assert!(fs::symlink_metadata(second.join("node_modules")).is_err());
     assert_eq!(nmpool::tree::manifest(&staging).unwrap(), preserved);
+    drop(store);
+    restore_fixture(&root);
+}
+
+fn assert_no_staging(store: &nmpool::shared::Store) {
+    assert_eq!(fs::read_dir(store.root.join("staging")).unwrap().count(), 0);
+}
+
+#[test]
+fn public_cli_adopts_qualifies_replaces_and_recovers() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    fs::create_dir_all(package.join("node_modules/generated")).unwrap();
+    fs::write(
+        package.join("node_modules/generated/index.js"),
+        "module.exports='schema-v1'",
+    )
+    .unwrap();
+    let original = nmpool::platform::shared::identity(&package.join("node_modules")).unwrap();
+    let cache = root.join("cache");
+    let base = [
+        "--package",
+        package.to_str().unwrap(),
+        "--cache",
+        cache.to_str().unwrap(),
+        "--profile",
+        profile.to_str().unwrap(),
+    ];
+    let plan = island_cli("adopt", &base, &["--plan"]);
+    let candidate = island_cli(
+        "adopt",
+        &base,
+        &["--plan-id", plan.get("id").unwrap().as_str().unwrap()],
+    );
+    let artifact = candidate.get("artifact_id").unwrap().as_str().unwrap();
+    island_cli("qualify", &base, &["--artifact", artifact]);
+    let replacement = island_cli("link", &base, &["--artifact", artifact, "--plan"]);
+    let id = replacement.get("id").unwrap().as_str().unwrap();
+    island_cli("link", &base, &["--plan-id", id]);
+    let retained = cli(&["retained", "--cache", cache.to_str().unwrap()]);
+    assert_eq!(retained.as_array().unwrap().len(), 1);
+    let recovery = [
+        "recover",
+        "--cache",
+        cache.to_str().unwrap(),
+        "--transaction",
+        id,
+    ];
+    assert_eq!(
+        cli(&[&recovery[..], &["--plan"]].concat())
+            .get("committed")
+            .unwrap(),
+        &json!(true)
+    );
+    cli(&[&recovery[..], &["--execute"]].concat());
+    assert_eq!(
+        nmpool::platform::shared::identity(&package.join("node_modules")).unwrap(),
+        original
+    );
+    restore_fixture(&root);
+}
+
+fn island_cli(command: &str, base: &[&str], extra: &[&str]) -> Value {
+    cli(&[&[command], base, extra].concat())
+}
+
+#[test]
+fn interrupted_link_creation_before_prepared_record_is_recoverable() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let captured = capture(&package, &profile);
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let (artifact, _) = store.prepare(&captured).unwrap();
+    let record = store.link(&captured, &artifact).unwrap();
+    let local = package.join(format!(".nmpool-link-{}", record.transaction_id));
+    assert!(!local.exists());
+    reproduce_unpublished_link(&store, &record, &local);
+    assert!(store.link(&captured, &artifact).is_err());
+    let plan = store.recover(&record.transaction_id, false).unwrap();
+    assert_eq!(plan.operation, "remove-staging-link");
+    assert!(local.join("link").exists());
+    store.recover(&record.transaction_id, true).unwrap();
+    assert!(!local.exists());
+    store.read(&artifact, true).unwrap();
+    store.link(&captured, &artifact).unwrap();
+    remove_consumer_link(&package.join("node_modules"));
+    drop(store);
+    restore_fixture(&root);
+}
+
+fn reproduce_unpublished_link(
+    store: &nmpool::shared::Store,
+    record: &nmpool::shared::Attachment,
+    local: &Path,
+) {
+    remove_consumer_link(&record.package.join("node_modules"));
+    fs::remove_file(record.package.join(".nmpool-shared.json")).unwrap();
+    let transaction = store.root.join("transactions").join(&record.transaction_id);
+    fs::remove_file(transaction.join("prepared.json")).unwrap();
+    fs::remove_file(transaction.join("committed")).unwrap();
+    fs::create_dir(local).unwrap();
+    let intent_path = transaction.join("intent.json");
+    let mut intent: Value = serde_json::from_slice(&fs::read(&intent_path).unwrap()).unwrap();
+    *intent.get_mut("staging_identity").unwrap() =
+        serde_json::to_value(nmpool::platform::shared::identity(local).unwrap()).unwrap();
+    fs::write(intent_path, serde_json::to_vec(&intent).unwrap()).unwrap();
+    fs::write(
+        record.package.join(".nmpool-pending"),
+        &record.transaction_id,
+    )
+    .unwrap();
+    nmpool::platform::shared::create_link(
+        &store.artifact(&record.artifact_id).unwrap().join("tree"),
+        &local.join("link"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn malformed_full_manifest_quarantines_generation_for_fast_readers() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let captured = capture(&package, &profile);
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let (artifact, _) = store.prepare(&captured).unwrap();
+    let directory = store.artifact(&artifact).unwrap();
+    let manifest = directory.join("manifest.json");
+    restore_fixture(&manifest);
+    fs::write(&manifest, b"{malformed").unwrap();
+    nmpool::platform::shared::protect_guard(&manifest).unwrap();
+    assert!(store.read(&artifact, true).is_err());
+    let error = store.read(&artifact, false).unwrap_err();
+    assert!(error.to_string().contains("quarantined"), "{error:#}");
     drop(store);
     restore_fixture(&root);
 }

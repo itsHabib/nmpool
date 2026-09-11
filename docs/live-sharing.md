@@ -83,6 +83,11 @@ Recovery checks the original physical identity and full manifest. For a first-ti
 attachment, the displayed `remove-attachment` operation removes only that exact
 link and leaves the package without `node_modules`; it does not install a replacement. It only removes
 the transaction's own link and never overwrites a new ordinary install. There is
-no garbage collector. Retained records and failed staging are deliberately kept.
+no garbage collector. Retained records and failed build staging are deliberately kept;
+successful build and qualification copies are removed. An interrupted local link
+creation is recorded before the link exists: `recover` reports `remove-staging-link`
+when publication never reached its prepared record. It validates the private staging
+directory and intended target before removing only the link. Changed or unavailable
+targets in that early window are held for inspection.
 Power-loss durability and the actual work-laptop application/performance trial
 remain separate from local fixture validation.

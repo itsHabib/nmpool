@@ -1,5 +1,6 @@
 //! Opt-in fixed shared generations, separate from private-copy receipts.
 mod attachment;
+mod staging;
 mod transaction;
 pub use attachment::Attachment;
 pub use transaction::Plan;
@@ -84,7 +85,9 @@ impl Store {
         capture.build(&package)?;
         capture.validate(&package)?;
         capture.ensure_unchanged()?;
-        self.publish(&package.join("node_modules"), capture, "controlled-build")
+        let artifact = self.publish(&package.join("node_modules"), capture, "controlled-build")?;
+        remove_staging(&staging)?;
+        Ok(artifact)
     }
 
     pub fn reject_package(&self, package: &Path) -> Result<()> {
@@ -248,7 +251,7 @@ fn verify_artifact(artifact: &Path, header: &Header, full: bool) -> Result<()> {
         }
     }
     if full {
-        verify_full(artifact, header)?;
+        verify_full(artifact, header).context("artifact_content_changed")?;
     }
     Ok(())
 }
@@ -394,4 +397,37 @@ impl Store {
             return result;
         }
     }
+}
+
+// Only used for successful private staging, never published or retained trees.
+fn remove_staging(path: &Path) -> Result<()> {
+    writable_staging(path)?;
+    fs::remove_dir_all(path)?;
+    Ok(())
+}
+
+fn writable_staging(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if platform::is_link(&metadata) {
+        return Ok(());
+    }
+    let mut permissions = metadata.permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(permissions.mode() | 0o200);
+    }
+    #[cfg(windows)]
+    #[allow(
+        clippy::permissions_set_readonly_false,
+        reason = "Windows-only removal of the readonly attribute on a disposable private copy; Unix grants owner write explicitly"
+    )]
+    permissions.set_readonly(false);
+    fs::set_permissions(path, permissions)?;
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path)? {
+            writable_staging(&entry?.path())?;
+        }
+    }
+    Ok(())
 }

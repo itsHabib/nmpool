@@ -15,6 +15,7 @@ pub struct Plan {
     pub schema: String,
     pub id: String,
     pub operation: String,
+    #[serde(default)]
     pub committed: bool,
     pub created_at: Option<u64>,
     pub git_commit: Option<String>,
@@ -171,6 +172,7 @@ impl Store {
         capture.ensure_unchanged()?;
         self.read(artifact, true)?;
         self.record_qualification(artifact, &header)?;
+        super::remove_staging(&staging)?;
         Ok(header)
     }
 
@@ -256,6 +258,7 @@ impl Store {
         if native::identity(&plan.package)? != plan.package_identity {
             bail!("recovery_package_changed");
         }
+        self.clean_staged_link(id, execute)?;
         let source = self.root.join("retained").join(id).join("tree");
         if !exists(&source)? {
             return self.recover_original_present(plan, execute);
@@ -330,8 +333,8 @@ impl Store {
         }
         // The exact no-follow link identity suffices for removal. Its target may
         // be missing or quarantined; recovery must never require a healthy pool.
+        Self::check_own_record(plan, &record)?;
         if execute {
-            Self::check_own_record(plan, &record)?;
             native::remove_link(&link, &record.link_identity)?;
             Self::remove_own_record(plan, &record)?;
         }
@@ -379,7 +382,7 @@ impl Store {
     }
 }
 
-fn exists(path: &std::path::Path) -> Result<bool> {
+pub(super) fn exists(path: &std::path::Path) -> Result<bool> {
     platform::plain_path(path)?;
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
@@ -434,6 +437,9 @@ impl Store {
 
     fn recover_attachment(&self, id: &str, execute: bool) -> Result<Plan> {
         let directory = self.root.join("transactions").join(id);
+        if !exists(&directory.join("prepared.json"))? {
+            return self.recover_unpublished_attachment(id, execute);
+        }
         let record: Attachment =
             serde_json::from_slice(&read_bounded(&directory.join("prepared.json"), 65536)?)?;
         if record.schema != "nmpool/attachment/v1" || record.transaction_id != id {
@@ -461,6 +467,7 @@ impl Store {
             artifact_id: Some(record.artifact_id.clone()),
         };
         Self::check_own_record(&plan, &record)?;
+        self.clean_staged_link(id, execute)?;
         match fs::symlink_metadata(plan.package.join("node_modules")) {
             Ok(_) => self.recover_link(&plan, execute)?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),

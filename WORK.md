@@ -30,3 +30,18 @@ No automatic garbage collection or published-generation mutation is introduced.
 
 Branch: feat/live-sharing. Implementation files are split among bounded workers;
 parent integrates CLI, end-to-end tests, documentation, CI and review.
+
+## Review follow-up, September 11
+
+Current follow-up fixes legacy v1 plan parsing, disposable build/qualification
+cleanup, recovery preview validation, durable package-local link intent/recovery,
+README mode wording, and full-audit quarantine classification. Public CLI coverage
+now includes adopt/qualify/planned replacement/retained/rollback. Local full checks
+pass (87 tests); Windows cross-target Clippy passes. Native CI still must verify
+this revision. Previous published head 1b4c4ae passed native Windows.
+
+Remaining review disposition: Copilot comments 3989940574 (trust-domain meaning),
+3989940659 (Windows destination binding), 3989940781 (candidate qualification
+binding), 3989940828 (provenance). Also assess suppressed lock-wait feedback and
+finish shared-status CLI exit coverage. Review source is PR16 and local review
+reports; no final approval or merge is claimed. Gate and work-laptop handoff remain.

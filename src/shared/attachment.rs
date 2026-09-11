@@ -87,13 +87,8 @@ impl Store {
     pub(super) fn attach(&self, capture: &Capture, artifact: &str, id: &str) -> Result<Attachment> {
         platform::absent(&capture.package.join(RECORD))?;
         let transaction = self.root.join("transactions").join(id);
-        let local_staging = capture.package.join(format!(".nmpool-link-{id}"));
-        platform::plain_path(&local_staging)?;
-        platform::absent(&local_staging)?;
-        fs::create_dir(&local_staging)?;
-        let staging = local_staging.join("link");
+        let staging = self.stage_link(capture, artifact, id)?;
         let target = self.artifact(artifact)?.join("tree");
-        native::create_link(&target, &staging)?;
         let runtime = capture.package.join(".nmpool-runtime").join(id);
         platform::plain_path(&runtime)?;
         fs::create_dir_all(&runtime)?;
@@ -120,6 +115,7 @@ impl Store {
         // Rename the link itself with no replacement; never touch the target tree.
         platform::publish(&staging, &capture.package.join("node_modules"))?;
         native::verify_link(&capture.package.join("node_modules"), &target)?;
+        self.clean_staged_link(id, true)?;
         write_new(&capture.package.join(RECORD), &bytes)?;
         write_new(&transaction.join("committed"), b"committed\n")?;
         Self::clear_pending(&capture.package, id)?;

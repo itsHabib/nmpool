@@ -182,8 +182,12 @@ through the final native move and refuse unresolved alias or race behavior.
 
 A locally observed tree cannot prove that current lock/schema files produced it.
 Adoption therefore produces a **candidate**, with a full manifest and explicit
-local attestation. Promotion needs a qualified receipt from a controlled build,
-or a reviewed adoption policy plus recorded application/generator validation.
+local attestation. Promotion by controlled build requires the same request key and exact equality
+between the candidate full-manifest digest/artifact ID and the qualified build.
+A receipt for generation A cannot qualify candidate B merely because their
+request keys match. Test equal-request/different-artifact rejection explicitly.
+The alternative is a reviewed adoption policy plus recorded application/generator
+validation bound to that exact candidate digest, with inputs unchanged throughout.
 Label the latter `locally-attested`; it is not silently equivalent to a fresh
 controlled build. Existing unexpected links, undeclared generated contents or
 unknown install provenance keep the candidate unqualified.
@@ -204,9 +208,14 @@ New versioned records (schema validation rejects unknown major versions):
 - `ArtifactHeader`: bounded versioned attachment metadata: request/artifact IDs,
   policy hash, runtime identity digest, full-manifest digest, nonempty/count summary,
   at most 16 required probes, qualification references and origin. Cap serialized
-  headers at 64 KiB; reject oversize records. An artifact ID hashes immutable header
-  fields and the separate full-manifest digest; mutable quarantine/audit state is
-  recorded separately and never changes artifact identity.
+  headers at 64 KiB; reject oversize records. Define `artifact_id` as SHA-256 over
+  domain `nmpool/shared-artifact/v1` followed by canonical UTF-8 JSON containing
+  only `{schema, request_key, policy_hash, runtime_digest, manifest_digest, origin}`.
+  Canonical JSON recursively sorts object keys, has no insignificant whitespace,
+  uses UTF-8 string encoding and permits integers only for numeric fields. The
+  `artifact_id` field itself, timestamps, paths, qualification references and
+  mutable state are explicitly excluded; unknown identity fields require a schema
+  revision. Mutable quarantine/audit state is recorded separately.
 - `ArtifactManifest`: separately stored complete file manifest and provenance
   detail, read during publication/full audit rather than on fast attach. Full
   verification checks its digest against the header; structural verification

@@ -3,7 +3,30 @@
 Use this guide when adding nmpool to a project's worktree workflow or when
 contributing to nmpool itself. You do not need context from an earlier conversation.
 
-## Use nmpool in another repository
+## Choose the workflow
+
+Use [shared installs](live-sharing.md) for a shared physical `node_modules`, approved
+generators/scripts, private registries or adoption of an existing install. Review
+`examples/island.json` against the consuming repository and record its exact inputs,
+commands and writable cache routing. `scan` reports the private-copy profile; an
+unsupported row is not a global refusal of an explicit sharing profile.
+
+For a sharing task, give the next agent this prompt:
+
+```text
+Set up shared node_modules for [repository/package] at [revision], using [pool]
+and [consumer worktree]. Read the repository instructions and nmpool's
+docs/live-sharing.md. Review an explicit island profile: registry hosts, generator
+input closure, approved install/validation commands and per-consumer writable caches.
+Prepare and link into the fresh consumer, run the real application checks, then
+perform a full shared-inspect. Record exact revisions, profile, commands, exit codes
+and whether both consumers resolve to the same generation. For an existing install,
+use planned adopt, qualify and planned replacement only when replacement is requested;
+retain its original and recovery records. Preserve unrelated files and report any
+unsupported write behavior. Do not claim application acceptance from a fixture.
+```
+
+## Use private copies in another repository
 
 Collect five inputs before installing: repository root, package path relative to
 that root, source revision, a new destination worktree path, and a dedicated cache
@@ -85,7 +108,7 @@ application test results, and remaining work. Leave the new worktree ready to us
 | Artifact mismatch or corrupt receipt | Preserve the evidence and stop using that entry. |
 
 Never edit `.nmpool-restore.json`. It records inputs and installed artifacts, not
-which agent changed a file. There is no automatic repair, adoption or GC command.
+which agent changed a file. There is no automatic repair or GC. Shared mode provides explicit planned adoption.
 For speed claims, follow the timing protocol and compare the same package/runtime
 and install recipe; a successful restore alone is functional evidence.
 
@@ -105,6 +128,10 @@ contract.
 | `src/state.rs` | Restoration records, drift reports and requirement comparisons. |
 | `src/assessment.rs` | Read-only package and ancestor assessment for sharing. |
 | `src/platform/protection.rs` | Disposable native consumer write-protection rehearsal. |
+| `src/island.rs` and `src/island/provenance.rs` | Shared policy, staged commands, registry admission and source provenance. |
+| `src/shared/` and `src/shared.rs` | Shared generations, attachment, adoption, qualification and recovery. |
+| `src/platform/shared/` and `src/platform/shared.rs` | Native link, protection and identity-bound move operations. |
+| `tests/island.rs` and `tests/shared_native.rs` | Shared CLI, concurrency, provenance and native recovery regressions. |
 | `src/census.rs` | Bounded inventory of Git worktrees and package candidates. |
 | `tests/contracts.rs` | Behavioral and filesystem regression checks. |
 | `tests/style.rs` | Rust style constraints, including Windows-only source. |
@@ -118,3 +145,10 @@ Open a focused PR with the problem, behavior and validation evidence. Follow
 [the review process](reviews.md). Hand off the exact commit, completed checks,
 review findings and unresolved limitations; do not merge without maintainer
 authority. Publishing instructions live in [releasing.md](releasing.md).
+
+## Shared installations
+
+Read [live sharing](live-sharing.md) for the opt-in policy, `link`, planned `adopt`,
+qualification and explicit recovery commands. Private-copy behavior is unchanged.
+Keep retained originals and failed staging until reviewed; no GC exists. Record
+what was tested on a native platform versus the actual application workload.

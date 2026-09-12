@@ -10,8 +10,15 @@ Copy `examples/island.json` and edit it for your actual npm package. Its command
 are examples, not discovery: `generate` and `test:dependencies` must exist and the
 application must actually use the configured private cache path. Include every
 schema, imported generator source and configuration file under `generator_inputs`.
-List inherited workspace/config files such as `../pnpm-workspace.yaml` under
-`context_inputs`; this records context without installing the parent workspace.
+List workspace/config files inside this checkout, such as `../pnpm-workspace.yaml`,
+under `context_inputs`; this records context without installing the parent workspace.
+Automatic discovery stops at the nearest `.git` directory or worktree `.git` file,
+including that directory. It does not inherit a home `.npmrc` or an outer checkout.
+For an unversioned package only its own directory is checked automatically; explicitly
+list any relevant parent context. Declared context is always captured, even outside
+the automatic boundary. Missing-context errors list every required relative path.
+Staged builds still use empty user/global npm config; this does not import registry
+credentials from your interactive npm setup.
 
 The profile supports npm lockfile v2/v3, lifecycle scripts and HTTPS private
 registries. Missing upstream integrity needs `allow_local_attestation`; that
@@ -24,12 +31,39 @@ integrity. This detailed record is checked during full audits. An independent np
 an explicit reviewed assertion, not something a pnpm parent proves. Linked/local
 workspace dependencies remain unsupported by this root-link strategy.
 
+Command `program` accepts only `node` or `npm`. To run a locally installed tool,
+use an npm script (for example, `"program": "npm", "args": ["run", "check"]`),
+not `"program": "npx"`. Profile parse failures retain the parser's diagnostic and location.
+
 Commands run against staging with a restricted environment and private npm cache.
 They are **not sandboxed**. Do not approve migrations or commands that mutate live
 sources. Put nonsecret environment names in `selected_env`. Credential names go
 in `credential_env` and npmrc uses placeholders such as `${NPM_TOKEN}`; never put
 literal credentials in a profile. Commands' output is suppressed to avoid leaking
 credentials. Check required inputs and commands before running the profile.
+
+## Reuse across task-script changes
+
+By default the complete `package.json` remains an input: arbitrary install or generator
+code can read it. Do not simply discard all fields outside dependency declarations.
+For task shortcuts that must not participate in an install, the optional profile field
+`"runtime_only_scripts": ["dev", "lint:local"]` removes only those named scripts from
+**both the staged package.json and its input key**. Use the same profile in all consumers.
+All other fields and scripts remain keyed; known install lifecycle hooks cannot be
+excluded. Build and validation commands must not depend on excluded scripts. Their
+removal is real, not an assertion that a hidden input is harmless.
+
+The live consumer's package.json is never rewritten. Runtime commands still use it.
+Source bytes are checked for concurrent changes, and source provenance v2 records the
+original package.json digest separately. Adoption remains local attestation: verify the
+exact candidate against the normalized recipe before trusting it. This option does not
+prove a pre-existing install was built from those inputs.
+
+The sharing input recipe is now `nmpool/island-inputs/v2`; existing request keys no longer
+match. Keep old generations, original installs and recovery records. Prepare a new
+generation (or explicitly adopt and qualify a candidate) for new attachments; do not
+edit old receipts or remove a live attachment to force compatibility. Private restore
+keys are unchanged.
 
 ## Prepare once and link
 

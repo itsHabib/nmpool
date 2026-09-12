@@ -141,7 +141,17 @@ runs against a published generation.
 The island policy is checked-in, versioned data. It declares package path,
 package-manager/version, lock format, ancestor/workspace context, accepted config
 keys, registry identities, exact generator input paths and install/generation
-commands. The policy hash itself enters the request key.
+commands. The policy hash itself enters the request key. Automatic ancestor discovery stops
+at the nearest checkout `.git` marker; explicitly listed context remains captured.
+Unversioned packages infer only local context. User/global npm config remains empty
+in staging, independently of where a consumer is located.
+
+Optional `runtime_only_scripts` names task shortcuts removed from both the staged
+manifest and its key. Install lifecycle hooks cannot be excluded. Original source
+bytes remain checked for concurrent changes and their package.json digest stays in
+provenance. All other manifest fields remain inputs; arbitrary scripts may read them.
+This changes the recipe to `nmpool/island-inputs/v2`, without rewriting old generations
+or private-copy keys. See [the operating procedure](../../live-sharing.md).
 
 Admitting an npm island inside a pnpm workspace requires proving its install does
 not resolve undeclared siblings, inherited configuration or workspace links.

@@ -13,6 +13,7 @@ pub struct Provenance {
     pub observed_at: u64,
     pub trust_domain: String,
     pub manifest_digest: String,
+    pub source_package_json_digest: String,
     pub sources: BTreeMap<String, Source>,
 }
 
@@ -56,7 +57,7 @@ impl Capture {
             });
         let origin = origin_label(local);
         Ok(Provenance {
-            schema: "nmpool/source-provenance/v1".into(),
+            schema: "nmpool/source-provenance/v2".into(),
             origin: origin.into(),
             build_method: method.into(),
             observed_at: std::time::SystemTime::now()
@@ -64,6 +65,12 @@ impl Capture {
                 .as_secs(),
             trust_domain: self.policy.trust_domain.clone(),
             manifest_digest,
+            source_package_json_digest: crate::digest(
+                self.files
+                    .get("package.json")
+                    .and_then(Option::as_ref)
+                    .context("island_input_missing")?,
+            ),
             sources,
         })
     }

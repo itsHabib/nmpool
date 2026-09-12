@@ -76,6 +76,7 @@ fn approved_npm_scripts_generate_in_staging_with_separate_runtime_state() {
 fn independent_island_pins_declared_workspace_context() {
     let temp = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(temp.path()).unwrap();
+    init_checkout(&root);
     let (package, profile) = fixture(&root);
     fs::write(root.join("pnpm-workspace.yaml"), "packages: [package]\n").unwrap();
     assert!(Capture::read(&package, &profile, Path::new("node"), None).is_err());
@@ -126,6 +127,10 @@ fn two_consumers_share_one_protected_generation_with_private_runtime_files() {
     let (second, second_profile) = fixture(&second_root);
     overlapping_runtime_profile(&profile);
     overlapping_runtime_profile(&second_profile);
+    runtime_only_profile(&profile);
+    runtime_only_profile(&second_profile);
+    set_script(&first, "dev", "node first-dev.js");
+    set_script(&second, "dev", "node other-dev.js");
     let capture_one = capture(&first, &profile);
     let capture_two = capture(&second, &second_profile);
     assert_eq!(capture_one.request_key, capture_two.request_key);
@@ -928,4 +933,203 @@ fn corrupt_commit_marker_is_not_a_committed_attachment() {
     remove_consumer_link(&package.join("node_modules"));
     drop(store);
     restore_fixture(&root);
+}
+
+#[test]
+fn checkout_context_stops_before_unrelated_outer_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    fs::write(
+        root.join(".npmrc"),
+        "//registry.example/:_authToken=outer-secret",
+    )
+    .unwrap();
+    let first_root = root.join("first");
+    let second_root = root.join("outer/.claude/worktrees/second");
+    fs::create_dir_all(&first_root).unwrap();
+    fs::create_dir_all(&second_root).unwrap();
+    fs::write(root.join("outer/package.json"), "{\"name\":\"unrelated\"}").unwrap();
+    init_checkout(&first_root);
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&first_root)
+            .args([
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "fixture"
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&first_root)
+            .args(["worktree", "add", "--quiet", "--detach"])
+            .arg(&second_root)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(second_root.join(".git").is_file());
+    let (first, first_profile) = fixture(&first_root);
+    let (second, second_profile) = fixture(&second_root);
+    let first_capture = capture(&first, &first_profile);
+    let second_capture = capture(&second, &second_profile);
+    assert_eq!(first_capture.request_key, second_capture.request_key);
+    fs::write(root.join(".npmrc"), "changed outside checkout").unwrap();
+    first_capture.ensure_unchanged().unwrap();
+    second_capture.ensure_unchanged().unwrap();
+}
+
+fn init_checkout(root: &Path) {
+    assert!(
+        std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .arg(root)
+            .status()
+            .unwrap()
+            .success()
+    );
+}
+
+#[test]
+fn missing_context_reports_all_required_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    init_checkout(&root);
+    let (package, profile) = fixture(&root);
+    fs::write(root.join("pnpm-workspace.yaml"), "packages: [package]\n").unwrap();
+    fs::write(root.join("package.json"), "{}").unwrap();
+    let error = Capture::read(&package, &profile, Path::new("node"), None)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("../pnpm-workspace.yaml"), "{error}");
+    assert!(error.contains("../package.json"), "{error}");
+}
+
+#[test]
+fn invalid_program_names_the_problem_and_allowed_values() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let mut value = policy();
+    *value
+        .get_mut("runtime_commands")
+        .unwrap()
+        .get_mut("check")
+        .unwrap()
+        .get_mut("program")
+        .unwrap() = json!("npx");
+    fs::write(&profile, serde_json::to_vec(&value).unwrap()).unwrap();
+    let error = Capture::read(&package, &profile, Path::new("node"), None)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("npx"), "{error}");
+    assert!(error.contains("node"), "{error}");
+    assert!(error.contains("npm"), "{error}");
+}
+
+fn runtime_only_profile(profile: &Path) {
+    let mut value: Value = serde_json::from_slice(&fs::read(profile).unwrap()).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .insert("runtime_only_scripts".into(), json!(["dev"]));
+    fs::write(profile, serde_json::to_vec(&value).unwrap()).unwrap();
+}
+
+fn set_script(package: &Path, name: &str, command: &str) {
+    let file = package.join("package.json");
+    let mut value: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    value
+        .get_mut("scripts")
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .insert(name.into(), json!(command));
+    fs::write(file, serde_json::to_vec(&value).unwrap()).unwrap();
+}
+
+#[test]
+fn runtime_only_scripts_are_removed_from_build_inputs_not_just_the_hash() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    runtime_only_profile(&profile);
+    set_script(&package, "dev", "node one.js");
+    let original = capture(&package, &profile);
+    let provenance = original
+        .provenance("controlled-build", "fixture".into())
+        .unwrap();
+    let stage = root.join("stage");
+    original.stage(&stage).unwrap();
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(stage.join("package.json")).unwrap()).unwrap();
+    assert!(manifest.get("scripts").unwrap().get("dev").is_none());
+    original.build(&stage).unwrap();
+    original.validate(&stage).unwrap();
+    set_script(&package, "dev", "node two.js");
+    assert!(original.ensure_unchanged().is_err());
+    let changed = capture(&package, &profile);
+    assert_eq!(original.request_key, changed.request_key);
+    assert_ne!(
+        provenance.source_package_json_digest,
+        changed
+            .provenance("controlled-build", "fixture".into())
+            .unwrap()
+            .source_package_json_digest
+    );
+    set_script(&package, "postinstall", "node different-generator.js");
+    assert_ne!(
+        original.request_key,
+        capture(&package, &profile).request_key
+    );
+}
+
+#[test]
+fn scripts_remain_inputs_unless_explicitly_excluded() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    set_script(&package, "dev", "node one.js");
+    let original = capture(&package, &profile);
+    set_script(&package, "dev", "node two.js");
+    assert_ne!(
+        original.request_key,
+        capture(&package, &profile).request_key
+    );
+}
+
+#[test]
+fn lifecycle_hooks_cannot_be_declared_runtime_only() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let mut value = policy();
+    value
+        .as_object_mut()
+        .unwrap()
+        .insert("runtime_only_scripts".into(), json!(["postinstall"]));
+    fs::write(&profile, serde_json::to_vec(&value).unwrap()).unwrap();
+    let error = Capture::read(&package, &profile, Path::new("node"), None)
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.contains("island_runtime_only_install_hook: postinstall"),
+        "{error}"
+    );
 }

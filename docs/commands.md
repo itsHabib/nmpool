@@ -138,3 +138,7 @@ precedence over `package-lock.json`, or null if neither exists. Selected lockfil
 use bounded, guarded JSON reads; unreadable or invalid shrinkwrap never falls back
 to package-lock. Shrinkwrap remains unsupported by private-copy preparation and
 retains its qualification blocker.
+
+Shared profiles accept command programs `node` and `npm`; use an npm script for a
+local executable rather than `npx`. See [shared input rules](live-sharing.md) for
+checkout-bounded context and optional `runtime_only_scripts` normalization.

@@ -7,6 +7,7 @@
   "allow_local_attestation": true,
   "generator_inputs": ["prisma/schema.prisma"],
   "context_inputs": [],
+  "runtime_only_scripts": [],
   "required_probes": [".prisma/client/index.js"],
   "build_commands": [
     {"program": "npm", "args": ["ci", "--audit=false", "--fund=false"], "env": {}},

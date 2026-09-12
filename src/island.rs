@@ -1,5 +1,6 @@
 //! Explicit, reviewed npm island inputs and commands. Staging is not a sandbox.
 mod provenance;
+mod recipe;
 pub use provenance::Provenance;
 
 use crate::{digest, inputs, platform};
@@ -40,6 +41,8 @@ pub struct Policy {
     pub allow_local_attestation: bool,
     pub generator_inputs: Vec<String>,
     pub context_inputs: Vec<String>,
+    #[serde(default)]
+    pub runtime_only_scripts: Vec<String>,
     pub required_probes: Vec<String>,
     pub build_commands: Vec<CommandSpec>,
     pub validation_commands: Vec<CommandSpec>,
@@ -72,6 +75,7 @@ pub struct Capture {
     profile: PathBuf,
     profile_bytes: Vec<u8>,
     files: BTreeMap<String, Option<Vec<u8>>>,
+    install_files: BTreeMap<String, Option<Vec<u8>>>,
     environment: BTreeMap<String, Option<String>>,
     toolchain: inputs::Toolchain,
 }
@@ -91,15 +95,16 @@ impl Capture {
         let profile = dunce::canonicalize(profile)?;
         let profile_bytes = required(&profile)?;
         let policy: Policy = serde_json::from_slice(&profile_bytes)
-            .map_err(|_| anyhow::anyhow!("island_policy_invalid"))?;
+            .map_err(|error| anyhow::anyhow!("island_policy_invalid: {error}"))?;
         validate_policy(&policy)?;
         let files = capture_files(&package, &policy)?;
         validate_package(&files, &policy)?;
+        let install_files = recipe::files(&files, &policy)?;
         let environment = selected_environment(&policy)?;
         let toolchain = inputs::Toolchain::discover(node, npm_cli)?;
         let policy_hash = digest(&profile_bytes);
         let runtime_digest = digest(&serde_json::to_vec(&toolchain.runtime)?);
-        let request_key = request_key(&files, &environment, &policy_hash, &runtime_digest)?;
+        let request_key = request_key(&install_files, &environment, &policy_hash, &runtime_digest)?;
         Ok(Self {
             package,
             policy,
@@ -109,6 +114,7 @@ impl Capture {
             profile,
             profile_bytes,
             files,
+            install_files,
             environment,
             toolchain,
         })
@@ -135,7 +141,7 @@ impl Capture {
             stage_file(
                 destination,
                 &name,
-                self.files.get(&name).and_then(Option::as_ref),
+                self.install_files.get(&name).and_then(Option::as_ref),
             )?;
         }
         fs::write(destination.join(MARKER), &self.request_key)?;
@@ -185,7 +191,7 @@ impl Capture {
         }
         for name in local_names(&self.policy) {
             let expected = self
-                .files
+                .install_files
                 .get(&name)
                 .and_then(Option::as_ref)
                 .map(|bytes| inputs::keyed_bytes(&name, bytes));
@@ -472,23 +478,56 @@ fn check_generator_inputs(
 }
 
 fn check_context(package: &Path, policy: &Policy) -> Result<()> {
+    let root = context_root(package)?;
+    let mut missing = Vec::new();
+    for (depth, ancestor) in package.ancestors().enumerate() {
+        check_ancestor(ancestor, depth, policy, &mut missing)?;
+        if ancestor == root {
+            break;
+        }
+    }
+    if !missing.is_empty() {
+        bail!(
+            "island_undeclared_context: add to context_inputs: {}",
+            missing.join(", ")
+        );
+    }
+    Ok(())
+}
+
+// A nested worktree's .git file is a boundary too. Unversioned islands have
+// no inferred parent context; explicitly declared context is still captured.
+fn context_root(package: &Path) -> Result<&Path> {
     for (depth, ancestor) in package.ancestors().enumerate() {
         if depth > 64 {
             bail!("island_ancestor_limit");
         }
-        check_ancestor(ancestor, depth, policy)?;
+        if ancestor.join(".git").try_exists()? {
+            return Ok(ancestor);
+        }
     }
-    Ok(())
+    Ok(package)
 }
 
-fn check_ancestor(ancestor: &Path, depth: usize, policy: &Policy) -> Result<()> {
+fn check_ancestor(
+    ancestor: &Path,
+    depth: usize,
+    policy: &Policy,
+    missing: &mut Vec<String>,
+) -> Result<()> {
     for name in CONTEXT_NAMES {
-        check_context_file(ancestor, depth, name, policy)?;
+        check_context_file(ancestor, depth, name, policy, missing)?;
     }
     Ok(())
 }
 
-fn check_context_file(ancestor: &Path, depth: usize, name: &str, policy: &Policy) -> Result<()> {
+fn check_context_file(
+    ancestor: &Path,
+    depth: usize,
+    name: &str,
+    policy: &Policy,
+    missing: &mut Vec<String>,
+) -> Result<()> {
     if depth == 0
         && [
             "package.json",
@@ -502,7 +541,7 @@ fn check_context_file(ancestor: &Path, depth: usize, name: &str, policy: &Policy
     }
     let key = format!("{}{name}", "../".repeat(depth));
     if optional(&ancestor.join(name))?.is_some() && !policy.context_inputs.contains(&key) {
-        bail!("island_undeclared_context");
+        missing.push(key);
     }
     Ok(())
 }
@@ -664,6 +703,7 @@ fn request_key(
         })
         .collect();
     Ok(digest(&serde_json::to_vec(&(
+        "nmpool/island-inputs/v2",
         hashes,
         environment,
         policy,

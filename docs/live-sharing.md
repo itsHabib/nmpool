@@ -128,6 +128,11 @@ nmpool recover --cache /pool --transaction REPLACEMENT_PLAN --plan
 nmpool recover --cache /pool --transaction REPLACEMENT_PLAN --execute
 ```
 
+`retained` fully verifies originals still held before listing them; this hashes their
+contents. Recovered entries are labeled `recovered`, not presented as held originals.
+Incomplete pre-move directories are omitted; a missing tree after a recorded move
+is an error until its recovery is resolved.
+
 Recovery checks the original physical identity and full manifest. For a first-time
 attachment, the displayed `remove-attachment` operation removes only that exact
 link and leaves the package without `node_modules`; it does not install a replacement. It only removes

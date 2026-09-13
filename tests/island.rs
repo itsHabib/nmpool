@@ -250,17 +250,11 @@ fn adoption_qualification_replacement_and_recovery_preserve_original_identity() 
     store.qualify(&capture, &artifact).unwrap();
     assert_no_staging(&store);
     let replacement = store.plan_replace(&capture, &artifact).unwrap();
+    assert_unmoved_plan_not_retained(&store, &replacement.id);
     store.replace(&capture, &replacement.id).unwrap();
     assert!(nmpool::platform::shared::link_identity(&original).is_ok());
     assert_eq!(store.retained().unwrap().len(), 1);
-    let retained_file = store
-        .root
-        .join("retained")
-        .join(&replacement.id)
-        .join("tree/generated/index.js");
-    fs::write(&retained_file, "same file count, wrong contents").unwrap();
-    assert!(store.recover(&replacement.id, false).is_err());
-    fs::write(&retained_file, "module.exports='schema-v1'").unwrap();
+    assert_retained_evidence_checked(&store, &replacement.id);
     assert!(store.recover(&replacement.id, false).unwrap().committed);
     store.recover(&replacement.id, true).unwrap();
     assert_eq!(
@@ -1210,4 +1204,87 @@ fn assert_corrupt_attachment_refused(cache: &Path, captured: &Capture, artifact:
     assert!(store.status(captured, false).is_err());
     assert!(store.link(captured, artifact).is_err());
     assert!(store.run_tool(captured, "check").is_err());
+}
+
+#[test]
+fn resumed_rollback_clears_only_its_own_receipt() {
+    for original_restored in [false, true] {
+        check_resumed_rollback(original_restored);
+    }
+}
+
+fn check_resumed_rollback(original_restored: bool) {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let captured = capture(&package, &profile);
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let (artifact, _) = store.prepare(&captured).unwrap();
+    let original = package.join("node_modules");
+    fs::create_dir(&original).unwrap();
+    fs::write(original.join("original"), "preserve").unwrap();
+    let identity = nmpool::platform::shared::identity(&original).unwrap();
+    let plan = store.plan_replace(&captured, &artifact).unwrap();
+    store.replace(&captured, &plan.id).unwrap();
+    remove_consumer_link(&original);
+    if original_restored {
+        nmpool::platform::shared::move_checked(
+            &store.root.join("retained").join(&plan.id).join("tree"),
+            &original,
+            &identity,
+        )
+        .unwrap();
+    }
+    let receipt = package.join(".nmpool-shared.json");
+    let bytes = fs::read(&receipt).unwrap();
+    fs::write(&receipt, b"different owner's receipt").unwrap();
+    assert!(store.recover(&plan.id, false).is_err());
+    assert!(store.recover(&plan.id, true).is_err());
+    assert_eq!(fs::read(&receipt).unwrap(), b"different owner's receipt");
+    fs::write(&receipt, &bytes).unwrap();
+    store.recover(&plan.id, false).unwrap();
+    assert_eq!(fs::read(&receipt).unwrap(), bytes);
+    store.recover(&plan.id, true).unwrap();
+    assert!(!receipt.exists());
+    store.recover(&plan.id, true).unwrap();
+    assert_eq!(
+        nmpool::platform::shared::identity(&original).unwrap(),
+        identity
+    );
+    assert_eq!(fs::read(original.join("original")).unwrap(), b"preserve");
+    store.plan_replace(&captured, &artifact).unwrap();
+    drop(store);
+    restore_fixture(&root);
+}
+
+fn assert_unmoved_plan_not_retained(store: &nmpool::shared::Store, id: &str) {
+    let directory = store.root.join("retained").join(id);
+    fs::create_dir(&directory).unwrap();
+    fs::copy(
+        store.root.join("transactions").join(id).join("plan.json"),
+        directory.join("provenance.json"),
+    )
+    .unwrap();
+    assert!(store.retained().unwrap().is_empty());
+    fs::remove_file(directory.join("provenance.json")).unwrap();
+    fs::remove_dir(directory).unwrap();
+}
+
+fn assert_retained_evidence_checked(store: &nmpool::shared::Store, id: &str) {
+    let directory = store.root.join("retained").join(id);
+    let file = directory.join("tree/generated/index.js");
+    fs::write(&file, "same file count, wrong contents").unwrap();
+    assert!(store.retained().is_err());
+    assert!(store.recover(id, false).is_err());
+    fs::write(&file, "module.exports='schema-v1'").unwrap();
+    let provenance = directory.join("provenance.json");
+    let bytes = fs::read(&provenance).unwrap();
+    fs::write(&provenance, b"{}").unwrap();
+    assert!(store.retained().is_err());
+    assert!(store.recover(id, false).is_err());
+    fs::write(provenance, bytes).unwrap();
+    fs::rename(directory.join("tree"), directory.join("held-tree")).unwrap();
+    assert!(store.retained().is_err());
+    fs::rename(directory.join("held-tree"), directory.join("tree")).unwrap();
+    assert_eq!(store.retained().unwrap().len(), 1);
 }

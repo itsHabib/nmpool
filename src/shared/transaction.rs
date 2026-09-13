@@ -336,11 +336,7 @@ impl Store {
         if !exists(&source)? {
             return self.recover_original_present(plan, execute);
         }
-        if native::identity(&source)? != plan.source_identity
-            || tree::fingerprint(&tree::manifest(&source)?)? != plan.source_manifest
-        {
-            bail!("retained_provenance_mismatch");
-        }
+        self.check_retained_original(&plan)?;
         let destination = plan.package.join("node_modules");
         self.check_recovery_destination(&plan, execute)?;
         if execute {
@@ -361,6 +357,7 @@ impl Store {
         {
             bail!("retained_tree_missing_and_original_changed");
         }
+        self.clean_recovery_record(&plan, execute)?;
         if execute {
             let marker = self
                 .root
@@ -379,7 +376,9 @@ impl Store {
     fn check_recovery_destination(&self, plan: &Plan, execute: bool) -> Result<()> {
         let destination = plan.package.join("node_modules");
         match fs::symlink_metadata(&destination) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.clean_recovery_record(plan, execute)
+            }
             Err(error) => Err(error.into()),
             Ok(_) => self.recover_link(plan, execute),
         }
@@ -429,13 +428,36 @@ impl Store {
 
     pub(super) fn remove_own_record(plan: &Plan, record: &Attachment) -> Result<()> {
         let path = plan.package.join(RECORD);
-        match read_bounded(&path, 65536) {
-            Ok(bytes) if bytes == serde_json::to_vec(record)? => {
-                fs::remove_file(path).map_err(Into::into)
-            }
-            Err(_) if !path.exists() => Ok(()),
-            _ => bail!("attachment_record_changed"),
+        if !exists(&path)? {
+            return Ok(());
         }
+        Self::check_own_record(plan, record)?;
+        fs::remove_file(path).map_err(Into::into)
+    }
+
+    fn clean_recovery_record(&self, plan: &Plan, execute: bool) -> Result<()> {
+        if !exists(&plan.package.join(RECORD))? {
+            return Ok(());
+        }
+        let path = self
+            .root
+            .join("transactions")
+            .join(&plan.id)
+            .join("prepared.json");
+        let record: Attachment = serde_json::from_slice(&read_bounded(&path, 65536)?)?;
+        if record.schema != "nmpool/attachment/v1"
+            || record.transaction_id != plan.id
+            || record.package != plan.package
+            || record.package_identity != plan.package_identity
+            || Some(&record.artifact_id) != plan.artifact_id.as_ref()
+        {
+            bail!("recovery_transaction_changed");
+        }
+        Self::check_own_record(plan, &record)?;
+        if execute {
+            Self::remove_own_record(plan, &record)?;
+        }
+        Ok(())
     }
 
     pub fn retained(&self) -> Result<Vec<Plan>> {
@@ -444,14 +466,62 @@ impl Store {
             let entry = entry?;
             let name = entry.file_name();
             let id = name.to_str().context("retained_id_invalid")?;
-            let mut plan = self.load_plan(id)?;
-            plan.committed = self.transaction_committed(id)?;
-            if exists(&self.root.join("transactions").join(id).join("recovered"))? {
-                plan.operation = "recovered".into();
+            if let Some(plan) = self.retained_plan(id)? {
+                plans.push(plan);
             }
-            plans.push(plan);
         }
         Ok(plans)
+    }
+
+    fn retained_plan(&self, id: &str) -> Result<Option<Plan>> {
+        let mut plan = self.load_plan(id)?;
+        if plan.operation != "replace" {
+            bail!("retained_transaction_invalid");
+        }
+        let transaction = self.root.join("transactions").join(id);
+        if exists(&transaction.join("recovered"))? {
+            if read_bounded(&transaction.join("recovered"), 64)? != b"recovered\n" {
+                bail!("recovery_marker_invalid");
+            }
+            self.check_retained_provenance(&plan)?;
+            plan.operation = "recovered".into();
+            plan.committed = self.transaction_committed(id)?;
+            return Ok(Some(plan));
+        }
+        if !exists(&self.root.join("retained").join(id).join("tree"))? {
+            if exists(&transaction.join("retained"))? {
+                bail!("retained_tree_missing: {id}");
+            }
+            return Ok(None);
+        }
+        self.check_retained_original(&plan)?;
+        plan.committed = self.transaction_committed(id)?;
+        Ok(Some(plan))
+    }
+
+    fn check_retained_provenance(&self, plan: &Plan) -> Result<()> {
+        let path = self
+            .root
+            .join("retained")
+            .join(&plan.id)
+            .join("provenance.json");
+        // Display fields are derived after verifying the original stored plan.
+        let original = self.load_plan(&plan.id)?;
+        if read_bounded(&path, 65536)? != serde_json::to_vec(&original)? {
+            bail!("retained_provenance_mismatch");
+        }
+        Ok(())
+    }
+
+    fn check_retained_original(&self, plan: &Plan) -> Result<()> {
+        self.check_retained_provenance(plan)?;
+        let source = self.root.join("retained").join(&plan.id).join("tree");
+        if native::identity(&source)? != plan.source_identity
+            || tree::fingerprint(&tree::manifest(&source)?)? != plan.source_manifest
+        {
+            bail!("retained_provenance_mismatch");
+        }
+        Ok(())
     }
 }
 

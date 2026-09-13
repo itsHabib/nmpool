@@ -388,6 +388,7 @@ fn safe_env(name: &str) -> bool {
         "WINDIR",
         "TEMP",
         "TMP",
+        "TMPDIR",
         "NODE_OPTIONS",
     ]
     .contains(&upper.as_str())

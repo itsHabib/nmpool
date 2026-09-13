@@ -127,8 +127,8 @@ impl Store {
         platform::plain_path(&package)?;
         let package = dunce::canonicalize(package)?;
         let _lock = DestinationLock::acquire(&package)?;
-        let mut record: Attachment =
-            serde_json::from_slice(&read_bounded(&package.join(RECORD), 65536)?)?;
+        let bytes = read_bounded(&package.join(RECORD), 65536)?;
+        let mut record: Attachment = serde_json::from_slice(&bytes)?;
         validate_id(&record.transaction_id)?;
         if record.schema != "nmpool/attachment/v1"
             || native::identity(&package)? != record.package_identity
@@ -137,6 +137,14 @@ impl Store {
         }
         if !self.transaction_committed(&record.transaction_id)? {
             bail!("attachment_not_committed");
+        }
+        let prepared = self
+            .root
+            .join("transactions")
+            .join(&record.transaction_id)
+            .join("prepared.json");
+        if read_bounded(&prepared, 65536)? != bytes {
+            bail!("attachment_transaction_changed");
         }
         let header = self.read(&record.artifact_id, full)?;
         if header.request_key != record.request_key {

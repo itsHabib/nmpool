@@ -1134,3 +1134,80 @@ fn lifecycle_hooks_cannot_be_declared_runtime_only() {
         "{error}"
     );
 }
+
+#[test]
+fn private_temp_environment_cannot_be_overridden() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    for pointer in ["/selected_env", "/credential_env"] {
+        let mut value = policy();
+        *value.pointer_mut(pointer).unwrap() = json!(["TMPDIR"]);
+        assert_invalid_temp_policy(&package, &profile, &value);
+    }
+    for pointer in [
+        "/build_commands/0/env",
+        "/validation_commands/0/env",
+        "/runtime_commands/check/env",
+    ] {
+        let mut value = policy();
+        *value.pointer_mut(pointer).unwrap() = json!({"TMPDIR":"shared-temp"});
+        assert_invalid_temp_policy(&package, &profile, &value);
+    }
+}
+
+fn assert_invalid_temp_policy(package: &Path, profile: &Path, value: &Value) {
+    fs::write(profile, serde_json::to_vec(value).unwrap()).unwrap();
+    let error = Capture::read(package, profile, Path::new("node"), None)
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("environment"), "{error}");
+}
+
+#[test]
+fn attachment_metadata_must_match_its_prepared_transaction() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let captured = capture(&package, &profile);
+    let cache = root.join("cache");
+    let store = nmpool::shared::Store::open(&cache).unwrap();
+    let (artifact, _) = store.prepare(&captured).unwrap();
+    let attached = store.link(&captured, &artifact).unwrap();
+    let second_root = root.join("second");
+    fs::create_dir(&second_root).unwrap();
+    let (second, second_profile) = fixture(&second_root);
+    let other = store
+        .link(&capture(&second, &second_profile), &artifact)
+        .unwrap();
+    let path = package.join(".nmpool-shared.json");
+    let original = fs::read(&path).unwrap();
+    drop(store);
+    for (field, replacement) in [
+        ("transaction_id", json!(other.transaction_id)),
+        ("runtime", json!(root.join("shared-runtime"))),
+        ("verification", json!("fabricated verification")),
+        ("last_full_audit", json!(0)),
+    ] {
+        let mut value: Value = serde_json::from_slice(&original).unwrap();
+        *value.get_mut(field).unwrap() = replacement;
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_corrupt_attachment_refused(&cache, &captured, &artifact);
+    }
+    assert!(!attached.runtime.join("check/output").exists());
+    fs::write(path, original).unwrap();
+    let store = nmpool::shared::Store::open(&cache).unwrap();
+    store.status(&captured, false).unwrap();
+    store.link(&captured, &artifact).unwrap();
+    remove_consumer_link(&package.join("node_modules"));
+    remove_consumer_link(&second.join("node_modules"));
+    drop(store);
+    restore_fixture(&root);
+}
+
+fn assert_corrupt_attachment_refused(cache: &Path, captured: &Capture, artifact: &str) {
+    let store = nmpool::shared::Store::open(cache).unwrap();
+    assert!(store.status(captured, false).is_err());
+    assert!(store.link(captured, artifact).is_err());
+    assert!(store.run_tool(captured, "check").is_err());
+}

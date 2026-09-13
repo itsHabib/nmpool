@@ -32,6 +32,7 @@ pub struct Plan {
 
 impl Store {
     pub fn plan_adopt(&self, capture: &Capture) -> Result<Plan> {
+        require_adoption_policy(capture)?;
         let _lock = DestinationLock::acquire(&capture.package)?;
         self.plan(capture, None)
     }
@@ -133,6 +134,7 @@ impl Store {
     }
 
     pub fn adopt(&self, capture: &Capture, id: &str) -> Result<(String, Header)> {
+        require_adoption_policy(capture)?;
         let _lock = DestinationLock::acquire(&capture.package)?;
         let plan = self.check_plan(capture, id, "adopt")?;
         let transaction = self.root.join("transactions").join(id);
@@ -673,4 +675,11 @@ fn protected_modes(manifest: &mut [tree::Entry]) {
             let _ = entry;
         }
     }
+}
+
+fn require_adoption_policy(capture: &Capture) -> Result<()> {
+    if !capture.policy.allow_local_attestation {
+        bail!("adoption_requires_local_attestation");
+    }
+    Ok(())
 }

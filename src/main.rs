@@ -203,7 +203,7 @@ fn run(cli: Cli) -> Result<u8> {
         }
         Commands::SharedStatus { args, full } => shared_status(&args, full),
         Commands::Run { args, tool } => {
-            reject_planning(&args)?;
+            reject_attachment_selectors(&args)?;
             let capture = shared_capture(&args)?;
             let record =
                 nmpool::shared::Store::open_for_runtime(&args.cache)?.run_tool(&capture, &tool)?;
@@ -422,7 +422,7 @@ fn shared_qualify(args: &SharedArgs) -> Result<u8> {
 }
 
 fn shared_status(args: &SharedArgs, full: bool) -> Result<u8> {
-    reject_planning(args)?;
+    reject_attachment_selectors(args)?;
     let capture = shared_capture(args)?;
     let record = nmpool::shared::Store::open(&args.cache)?.status(&capture, full)?;
     println!("{}", serde_json::to_string_pretty(&record)?);
@@ -432,6 +432,14 @@ fn shared_status(args: &SharedArgs, full: bool) -> Result<u8> {
 fn reject_planning(args: &SharedArgs) -> Result<()> {
     if args.plan || args.plan_id.is_some() {
         anyhow::bail!("planning_flags_require_link_or_adopt");
+    }
+    Ok(())
+}
+
+fn reject_attachment_selectors(args: &SharedArgs) -> Result<()> {
+    reject_planning(args)?;
+    if args.artifact.is_some() {
+        anyhow::bail!("artifact_selector_not_supported");
     }
     Ok(())
 }

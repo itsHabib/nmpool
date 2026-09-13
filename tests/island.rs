@@ -407,6 +407,7 @@ fn public_cli_prepares_and_links_a_generated_artifact() {
         "--artifact",
         artifact,
     ]);
+    assert_attached_run_rejects_selector(&package, &cache, &profile);
     cli(&[
         "run",
         "--package",
@@ -1287,4 +1288,95 @@ fn assert_retained_evidence_checked(store: &nmpool::shared::Store, id: &str) {
     assert!(store.retained().is_err());
     fs::rename(directory.join("held-tree"), directory.join("tree")).unwrap();
     assert_eq!(store.retained().unwrap().len(), 1);
+}
+
+#[test]
+fn adoption_requires_authorization_before_creating_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let mut value = policy();
+    *value.get_mut("allow_local_attestation").unwrap() = json!(false);
+    fs::write(&profile, serde_json::to_vec(&value).unwrap()).unwrap();
+    let captured = capture(&package, &profile);
+    let original = package.join("node_modules");
+    fs::create_dir(&original).unwrap();
+    fs::write(original.join("original"), "preserve").unwrap();
+    let identity = nmpool::platform::shared::identity(&original).unwrap();
+    let store = nmpool::shared::Store::open(&root.join("cache")).unwrap();
+    let error = store.plan_adopt(&captured).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("adoption_requires_local_attestation")
+    );
+    let error = store.adopt(&captured, &"0".repeat(64)).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("adoption_requires_local_attestation")
+    );
+    assert_eq!(
+        fs::read_dir(store.root.join("transactions"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert_eq!(
+        fs::read_dir(store.root.join("artifacts")).unwrap().count(),
+        0
+    );
+    assert_eq!(
+        nmpool::platform::shared::identity(&original).unwrap(),
+        identity
+    );
+    assert_eq!(fs::read(original.join("original")).unwrap(), b"preserve");
+}
+
+#[test]
+fn current_attachment_commands_reject_artifact_selectors() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let cache = root.join("cache");
+    for (verb, extra) in [("run", vec!["--tool", "check"]), ("shared-status", vec![])] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_nmpool"))
+            .args([verb, "--package"])
+            .arg(&package)
+            .arg("--cache")
+            .arg(&cache)
+            .arg("--profile")
+            .arg(&profile)
+            .args(["--artifact", "unexpected-generation"])
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("artifact_selector_not_supported")
+        );
+    }
+    assert!(!cache.exists());
+    assert!(!package.join(".nmpool-runtime").exists());
+}
+
+fn assert_attached_run_rejects_selector(package: &Path, cache: &Path, profile: &Path) {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_nmpool"))
+        .arg("run")
+        .arg("--package")
+        .arg(package)
+        .arg("--cache")
+        .arg(cache)
+        .arg("--profile")
+        .arg(profile)
+        .args(["--tool", "check", "--artifact", "wrong-generation"])
+        .env("NMP_TEST_TOKEN", "fixture-value")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("artifact_selector_not_supported"));
+    let record: Value =
+        serde_json::from_slice(&fs::read(package.join(".nmpool-shared.json")).unwrap()).unwrap();
+    let runtime = Path::new(record.get("runtime").unwrap().as_str().unwrap());
+    assert!(!runtime.join("check/output").exists());
 }

@@ -938,7 +938,8 @@ fn corrupt_commit_marker_is_not_a_committed_attachment() {
 #[test]
 fn checkout_context_stops_before_unrelated_outer_files() {
     let temp = tempfile::tempdir().unwrap();
-    let root = fs::canonicalize(temp.path()).unwrap();
+    // Git for Windows cannot write worktree metadata through a verbatim path.
+    let root = dunce::canonicalize(temp.path()).unwrap();
     fs::write(
         root.join(".npmrc"),
         "//registry.example/:_authToken=outer-secret",

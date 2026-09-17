@@ -1108,6 +1108,192 @@ fn checkout_context_stops_before_unrelated_outer_files() {
     second_capture.ensure_unchanged().unwrap();
 }
 
+#[test]
+fn prepare_base_exports_committed_inputs_and_keys_like_a_clean_worktree() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let repo = root.join("repo");
+    fs::create_dir(&repo).unwrap();
+    init_checkout(&repo);
+    let (package, profile) = fixture(&repo);
+    fs::write(repo.join(".gitignore"), "node_modules\n.nmpool*\n").unwrap();
+    git_commit(&repo, "base");
+    // Make the working tree a real checkout: hand-written files never passed
+    // through Git's filters (autocrlf on Windows), a checkout does.
+    fs::remove_dir_all(&package).unwrap();
+    git_run(&repo, &["checkout", "--", "."]);
+    let committed = capture(&package, &profile).request_key;
+    // The working tree moves on; the base revision must not read it.
+    fs::write(package.join("schema.txt"), "schema-v2").unwrap();
+    assert_ne!(capture(&package, &profile).request_key, committed);
+    let cache = root.join("cache");
+    let base = [
+        "--package",
+        package.to_str().unwrap(),
+        "--cache",
+        cache.to_str().unwrap(),
+        "--profile",
+        profile.to_str().unwrap(),
+    ];
+    let report = island_cli("prepare", &base, &["--base", "HEAD"]);
+    assert_eq!(
+        report
+            .pointer("/header/request_key")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        committed
+    );
+    let exported = report
+        .pointer("/base/exported")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert!(
+        exported.iter().any(|v| v == "package/schema.txt"),
+        "{exported:?}"
+    );
+    assert!(
+        exported.iter().all(|v| v != "package/.npmrc"),
+        "{exported:?}"
+    );
+    let artifact = report.get("artifact_id").unwrap().as_str().unwrap();
+    assert!(!package.join("node_modules").exists());
+    assert_eq!(fs::read(package.join("schema.txt")).unwrap(), b"schema-v2");
+    let dirty = cli_error(&[&["link"], &base[..], &["--artifact", artifact]].concat());
+    assert!(dirty.contains("request_mismatch"), "{dirty}");
+    fs::write(package.join("schema.txt"), "schema-v1").unwrap();
+    island_cli("link", &base, &["--artifact", artifact]);
+    assert_eq!(
+        fs::read(package.join("node_modules/generated/index.js")).unwrap(),
+        b"module.exports=\"schema-v1\""
+    );
+    assert_base_refusals(&package, &cache, &base);
+    assert_base_matches_fresh_clone(&root, &repo, &profile, &base);
+    assert_base_refuses_committed_context_and_links(&repo, &package, &base);
+    remove_consumer_link(&package.join("node_modules"));
+    restore_fixture(&root);
+}
+
+/// A clone applies eol attributes on checkout; the export must key the same.
+fn assert_base_matches_fresh_clone(root: &Path, repo: &Path, profile: &Path, base: &[&str]) {
+    // The generator script is a declared input whose line endings do not
+    // change what it generates; a trailing newline gives eol something to convert.
+    let generator = repo.join("package/generate.cjs");
+    let script = fs::read_to_string(&generator).unwrap();
+    fs::write(&generator, format!("{}\n", script.trim_end())).unwrap();
+    fs::write(
+        repo.join(".gitattributes"),
+        "package/generate.cjs text eol=crlf\n",
+    )
+    .unwrap();
+    git_commit(repo, "crlf attribute");
+    // Git refuses a verbatim `\\?\` work tree path on Windows; hand it plain paths.
+    let clone = dunce::simplified(root).join("clone");
+    assert!(
+        std::process::Command::new("git")
+            .args(["clone", "--quiet"])
+            .arg(dunce::simplified(repo))
+            .arg(&clone)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        fs::read(clone.join("package/generate.cjs"))
+            .unwrap()
+            .ends_with(b"\r\n"),
+        "clone applied the attribute"
+    );
+    let clone_key = capture(&clone.join("package"), profile).request_key;
+    let report = island_cli("prepare", base, &["--base", "HEAD"]);
+    assert_eq!(
+        report
+            .pointer("/header/request_key")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        clone_key
+    );
+}
+
+/// Context Git records but the profile does not declare refuses the same way
+/// a checkout does; a symlinked input at the revision refuses by type.
+fn assert_base_refuses_committed_context_and_links(repo: &Path, package: &Path, base: &[&str]) {
+    fs::write(package.join("yarn.lock"), "# lock\n").unwrap();
+    fs::write(repo.join("package.json"), "{}").unwrap();
+    git_commit(repo, "undeclared context");
+    let undeclared = cli_error(&[&["prepare"], base, &["--base", "HEAD"]].concat());
+    assert!(
+        undeclared.contains("island_undeclared_context"),
+        "{undeclared}"
+    );
+    assert!(undeclared.contains("yarn.lock"), "{undeclared}");
+    assert!(undeclared.contains("../package.json"), "{undeclared}");
+    fs::remove_file(package.join("yarn.lock")).unwrap();
+    fs::remove_file(repo.join("package.json")).unwrap();
+    git_commit(repo, "context removed");
+    #[cfg(unix)]
+    {
+        fs::remove_file(package.join("schema.txt")).unwrap();
+        fs::write(package.join("real.txt"), "schema-v1").unwrap();
+        std::os::unix::fs::symlink("real.txt", package.join("schema.txt")).unwrap();
+        git_commit(repo, "symlinked input");
+        let linked = cli_error(&[&["prepare"], base, &["--base", "HEAD"]].concat());
+        assert!(linked.contains("base_input_type"), "{linked}");
+    }
+}
+
+fn assert_base_refusals(package: &Path, cache: &Path, base: &[&str]) {
+    let bad = cli_error(&[&["prepare"], base, &["--base", "no-such-revision"]].concat());
+    assert!(bad.contains("base_git_failed"), "{bad}");
+    let plain = cli_error(&[
+        "prepare",
+        "--package",
+        package.to_str().unwrap(),
+        "--cache",
+        cache.to_str().unwrap(),
+        "--base",
+        "HEAD",
+    ]);
+    assert!(
+        plain.contains("base_requires_prepare_with_profile"),
+        "{plain}"
+    );
+}
+
+fn git_commit(repo: &Path, message: &str) {
+    git_run(repo, &["add", "-A"]);
+    git_run(
+        repo,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            message,
+        ],
+    );
+}
+
+fn git_run(repo: &Path, args: &[&str]) {
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .status()
+            .unwrap()
+            .success(),
+        "git {args:?}"
+    );
+}
+
 fn init_checkout(root: &Path) {
     assert!(
         std::process::Command::new("git")

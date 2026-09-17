@@ -7,6 +7,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `prepare --profile --base REV` prepares a shared generation from the inputs
+  committed at a Git revision, without a worktree and without reading the
+  working tree.
 - `unlink` removes only a package's own first-time shared attachment, previewing
   by default; copied records, changed links and replaced originals refuse.
 - `census` reports each worktree's branch and HEAD commit time; `--stale DAYS`

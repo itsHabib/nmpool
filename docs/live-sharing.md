@@ -112,6 +112,26 @@ non-clean observation; explicit `shared-inspect --full` hashes the whole tree.
 Detected content/protection failures quarantine a generation for future access;
 prepare a new generation instead of editing published bytes.
 
+## Prepare a base revision before a wave starts
+
+```sh
+nmpool prepare --package /repo/web --cache /pool --profile /repo/island.json --base origin/main
+```
+
+`--base` exports the package's inputs (manifest, lock, npmrc, `generator_inputs`,
+`context_inputs`, and any context file Git records in an ancestor directory) as
+committed at that revision into a private temporary directory and prepares from
+there. Bytes pass through the current checkout's attribute filters (eol,
+autocrlf, smudge), so they match a clean checkout made from this repository
+with this configuration. Package inputs are not read from the working tree and
+nothing there changes; no worktree is created. The result keys like such a clean
+checkout with the same profile and runtime, so builders that later `link` from
+one hit the generation instead of racing an install. Undeclared context refuses
+exactly as it would in a checkout. The output's `base` block records the
+repository, resolved commit and exported paths. A revision Git cannot resolve
+is `base_git_failed`; a symlink, submodule or directory at an input path is
+`base_input_type`; a context path that climbs above the repository is refused.
+
 ## Detach before removing a worktree
 
 ```sh

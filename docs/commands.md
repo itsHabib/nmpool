@@ -4,6 +4,8 @@
 
 Use [shared installs](live-sharing.md) for full commands and the required island
 profile. `prepare --profile` publishes a shared generation; `restore` stays private.
+`prepare --profile --base REV` prepares from the inputs committed at a Git revision
+without reading the working tree or creating a worktree.
 
 | Command | Purpose |
 |---|---|

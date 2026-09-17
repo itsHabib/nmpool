@@ -447,6 +447,117 @@ fn public_cli_prepares_and_links_a_generated_artifact() {
     restore_fixture(&root);
 }
 
+#[test]
+fn public_cli_unlink_removes_only_its_own_attachment() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let sibling_root = root.join("sibling");
+    fs::create_dir(&sibling_root).unwrap();
+    let (sibling, _) = fixture(&sibling_root);
+    let cache = root.join("cache");
+    let cache_text = cache.to_str().unwrap();
+    let package_text = package.to_str().unwrap();
+    let base = [
+        "--package",
+        package_text,
+        "--cache",
+        cache_text,
+        "--profile",
+        profile.to_str().unwrap(),
+    ];
+    let report = island_cli("prepare", &base, &[]);
+    let artifact = report.get("artifact_id").unwrap().as_str().unwrap();
+    island_cli("link", &base, &["--artifact", artifact]);
+    let unlink = ["unlink", "--cache", cache_text, "--package", package_text];
+    let plan = cli(&[&unlink[..], &["--plan"]].concat());
+    assert_eq!(plan.get("operation").unwrap(), &json!("remove-attachment"));
+    assert!(package.join("node_modules/generated/index.js").exists());
+    assert_foreign_records_refuse_unlink(&package, &sibling, cache_text);
+    cli(&[&unlink[..], &["--execute"]].concat());
+    assert!(fs::symlink_metadata(package.join("node_modules")).is_err());
+    assert!(!package.join(".nmpool-shared.json").exists());
+    let again = cli_error(&unlink);
+    assert!(again.contains("attachment_absent"), "{again}");
+    // Relinking after unlink attaches the same generation again.
+    island_cli("link", &base, &["--artifact", artifact]);
+    assert!(package.join("node_modules/generated/index.js").exists());
+    assert_hand_link_refuses_unlink(&package, cache_text);
+    remove_consumer_link(&package.join("node_modules"));
+    restore_fixture(&root);
+}
+
+/// A record copied from a sibling, verbatim or with its package path edited,
+/// must refuse and leave the original's link and record in place.
+fn assert_foreign_records_refuse_unlink(package: &Path, sibling: &Path, cache_text: &str) {
+    let record = package.join(".nmpool-shared.json");
+    let unlink = [
+        "unlink",
+        "--cache",
+        cache_text,
+        "--package",
+        sibling.to_str().unwrap(),
+        "--execute",
+    ];
+    fs::copy(&record, sibling.join(".nmpool-shared.json")).unwrap();
+    let copied = cli_error(&unlink);
+    assert!(copied.contains("attachment_package_mismatch"), "{copied}");
+    // Rewrite the package field the way the tool records paths (dunce form),
+    // which differs from std canonicalization on Windows.
+    let mut forged: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
+    forged.as_object_mut().unwrap().insert(
+        "package".into(),
+        json!(dunce::canonicalize(sibling).unwrap()),
+    );
+    fs::write(
+        sibling.join(".nmpool-shared.json"),
+        serde_json::to_vec(&forged).unwrap(),
+    )
+    .unwrap();
+    let edited = cli_error(&unlink);
+    assert!(
+        edited.contains("attachment_transaction_changed"),
+        "{edited}"
+    );
+    assert!(package.join("node_modules/generated/index.js").exists());
+    assert!(record.exists());
+    fs::remove_file(sibling.join(".nmpool-shared.json")).unwrap();
+}
+
+/// Replace the recorded link with a hand-made one to the same tree: unlink must
+/// refuse and leave it. The hand link stays for the caller to clean up.
+fn assert_hand_link_refuses_unlink(package: &Path, cache_text: &str) {
+    let link = package.join("node_modules");
+    let target = fs::read_link(&link).unwrap();
+    remove_consumer_link(&link);
+    nmpool::platform::shared::create_link(&target, &link).unwrap();
+    let refused = cli_error(&[
+        "unlink",
+        "--cache",
+        cache_text,
+        "--package",
+        package.to_str().unwrap(),
+        "--execute",
+    ]);
+    assert!(
+        refused.contains("recovery_destination_changed"),
+        "{refused}"
+    );
+    assert!(link.join("generated/index.js").exists());
+    assert!(package.join(".nmpool-shared.json").exists());
+    remove_consumer_link(&link);
+    nmpool::platform::shared::create_link(&target, &link).unwrap();
+}
+
+fn cli_error(args: &[&str]) -> String {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_nmpool"))
+        .args(args)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
 fn cli(args: &[&str]) -> Value {
     cli_code(args, 0)
 }
@@ -558,6 +669,15 @@ fn public_cli_adopts_qualifies_replaces_and_recovers() {
     let replacement = island_cli("link", &base, &["--artifact", artifact, "--plan"]);
     let id = replacement.get("id").unwrap().as_str().unwrap();
     island_cli("link", &base, &["--plan-id", id]);
+    let refused = cli_error(&[
+        "unlink",
+        "--cache",
+        cache.to_str().unwrap(),
+        "--package",
+        package.to_str().unwrap(),
+        "--execute",
+    ]);
+    assert!(refused.contains("unlink_refuses_replacement"), "{refused}");
     let retained = cli(&["retained", "--cache", cache.to_str().unwrap()]);
     assert_eq!(retained.as_array().unwrap().len(), 1);
     let recovery = [

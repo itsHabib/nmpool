@@ -15,6 +15,7 @@ profile. `prepare --profile` publishes a shared generation; `restore` stays priv
 | `shared-inspect --full` | Fully verify an artifact and its bound provenance. |
 | `retained` | List originals retained by replacement transactions. |
 | `recover` | Preview recovery by default; only `--execute` performs it. |
+| `unlink` | Remove only this package's own first-time attachment; preview by default. |
 
 ## Private-copy mode
 
@@ -35,6 +36,14 @@ For `assess --package` and `protection-probe --parent` on Windows, use absolute
 paths (`C:\repo\package`) or ordinary relative paths (`.\package`). These arguments
 refuse drive-relative forms such as `C:package`, whose meaning depends on hidden
 per-drive working-directory state.
+
+## Identify the binary
+
+`nmpool --version` prints the crate version and every record schema this build
+reads or writes. A programmatic caller should run it once and check for the
+`attachment record:` line before trusting output; a different program that also
+answers to `nmpool` on PATH will not print it. Invoke the binary by its full path
+when several are installed; nmpool does not read an environment override.
 
 ## Daily use
 
@@ -96,8 +105,13 @@ Node, avoiding shell parsing of an npm.cmd command line.
 
 `census` is read-only. Repeat `--repo` to scan more than one repository; registered
 worktrees are deduplicated. Default package depth is two; `--max-depth` permits up to
-eight. JSON includes incomplete-scan errors, candidate input groups and link states.
-Exit 0 means complete within scope, 2 partial census, 1 failure.
+eight. JSON includes incomplete-scan errors, candidate input groups, link states,
+and each worktree's branch and HEAD commit time as Git reports them. `--stale DAYS`
+keeps only packages whose worktree HEAD commit is at least that old; an unborn
+branch or an unreadable commit has no commit time and is kept, and an unreadable
+commit is reported as a partial-scan error for that worktree only. It names candidates for a separate cleanup
+and never removes a worktree. Exit 0 means complete within scope, 2 partial census,
+1 failure.
 
 `prepare` creates a fresh install in private staging, never in the source package.
 `restore` only accepts an absent node_modules. It leaves a `.nmpool.lock` in the

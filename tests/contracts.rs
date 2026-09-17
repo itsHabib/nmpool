@@ -435,6 +435,25 @@ fn git(root: &Path, args: &[&str]) {
     );
 }
 
+fn assert_worktree_age_and_branch(report: &census::Census, repo: &PathBuf) {
+    assert!(report.rows.iter().all(|row| row.head_commit_unix.is_some()));
+    let branches: Vec<_> = report.rows.iter().map(|row| row.branch.clone()).collect();
+    assert!(branches.contains(&None), "detached worktree: {branches:?}");
+    assert!(
+        branches
+            .iter()
+            .flatten()
+            .all(|name| !name.starts_with("refs/")),
+        "{branches:?}"
+    );
+    let fresh = census::run(std::slice::from_ref(repo), 2, Some(0)).unwrap();
+    assert_eq!(fresh.rows.len(), 2);
+    assert_eq!(fresh.stale_days, Some(0));
+    let stale = census::run(std::slice::from_ref(repo), 2, Some(1)).unwrap();
+    assert!(stale.complete_within_scope, "{:?}", stale.errors);
+    assert!(stale.rows.is_empty(), "{:?}", stale.rows);
+}
+
 #[test]
 fn census_deduplicates_registered_worktrees_and_reports_missing_paths() {
     let (_temp, root) = scratch();
@@ -459,12 +478,13 @@ fn census_deduplicates_registered_worktrees_and_reports_missing_paths() {
         &repo,
         &["worktree", "add", "--detach", linked.to_str().unwrap()],
     );
-    let report = census::run(&[repo.clone(), linked.clone()], 2).unwrap();
+    let report = census::run(&[repo.clone(), linked.clone()], 2, None).unwrap();
     assert!(report.complete_within_scope, "{:?}", report.errors);
     assert_eq!(report.rows.len(), 2);
     assert_eq!(report.duplicate_worktree_enumerations, 2);
+    assert_worktree_age_and_branch(&report, &repo);
     fs::remove_dir_all(&linked).unwrap();
-    let report = census::run(&[repo], 2).unwrap();
+    let report = census::run(&[repo], 2, None).unwrap();
     assert!(!report.complete_within_scope);
     assert!(
         report
@@ -870,13 +890,70 @@ fn status_reports_busy_before_absent_or_untracked() {
 }
 
 #[test]
+fn census_keeps_other_worktrees_when_one_head_commit_is_unreadable() {
+    let (_temp, root) = scratch();
+    let repo = root.join("repo");
+    package(&repo);
+    git(&repo, &["init"]);
+    git(&repo, &["add", "package.json", "package-lock.json"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-m",
+            "fixture",
+        ],
+    );
+    let linked = root.join("linked");
+    git(
+        &repo,
+        &["worktree", "add", "--detach", linked.to_str().unwrap()],
+    );
+    fs::write(
+        repo.join(".git/worktrees/linked/HEAD"),
+        "0123456789abcdef0123456789abcdef01234567\n",
+    )
+    .unwrap();
+    let report = census::run(std::slice::from_ref(&repo), 2, None).unwrap();
+    assert!(!report.complete_within_scope);
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.contains("git_commit_time_failed")),
+        "{:?}",
+        report.errors
+    );
+    assert_eq!(report.rows.len(), 2, "{:?}", report.rows);
+    assert_eq!(
+        report
+            .rows
+            .iter()
+            .filter(|row| row.head_commit_unix.is_some())
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn census_skips_case_variant_dependency_trees_and_records_missing_lock() {
     let (_temp, root) = scratch();
     package(&root);
     git(&root, &["init"]);
     package(&root.join("Node_Modules/dependency"));
     fs::remove_file(root.join("package-lock.json")).unwrap();
-    let report = census::run(&[root], 4).unwrap();
+    let unborn = census::run(std::slice::from_ref(&root), 4, Some(1)).unwrap();
+    assert_eq!(
+        unborn.rows.len(),
+        1,
+        "unknown commit time is kept under --stale"
+    );
+    let report = census::run(&[root], 4, None).unwrap();
+    assert!(report.rows.iter().all(|row| row.head_commit_unix.is_none()));
     assert!(report.complete_within_scope, "{:?}", report.errors);
     assert_eq!(report.rows.len(), 1);
     assert!(

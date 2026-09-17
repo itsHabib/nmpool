@@ -91,6 +91,17 @@ cannot redirect writes outside `node_modules` is incompatible with this strategy
 `run` and `shared-status` use the current attachment; they reject `--artifact`
 rather than treating it as an identity guard.
 
+Tools that write a cache under `node_modules` (prettier, eslint, babel-loader)
+fail against the protected tree. Point them at `{runtime}` instead; the example
+profile's `format` command passes `--cache-location {runtime}/prettier`.
+
+There is no in-place repair of a generation. When a tree is found empty, altered
+or quarantined, `prepare --profile` from any worktree whose inputs key to it
+publishes a fresh generation; the damaged one stays for inspection. Every
+pool-changing step is a transaction directory under `shared-v1/transactions/<id>`
+with `prepared.json`, `committed` and `recovered` markers, which is the record of
+what touched a generation and when.
+
 Pool-changing operations are serialized. `run` waits for the current pool operation
 (including a long prepare or full audit) at startup and its final check; cancel it
 with Ctrl-C if you do not want to wait. The pool lock is released while the tool runs.
@@ -100,6 +111,28 @@ They are not fresh full-content verification. `shared-status` exits 2 for this
 non-clean observation; explicit `shared-inspect --full` hashes the whole tree.
 Detected content/protection failures quarantine a generation for future access;
 prepare a new generation instead of editing published bytes.
+
+## Detach before removing a worktree
+
+```sh
+nmpool unlink --package /other-worktree/web --cache /pool
+nmpool unlink --package /other-worktree/web --cache /pool --execute
+git worktree remove /other-worktree
+```
+
+`unlink` reads the package's own attachment record and requires it to name this
+package and to equal the pool's prepared record for its committed transaction.
+It then removes only that link (when it still has the recorded identity) and the
+record, leaving the package without `node_modules`. A hand-made link, a copied or
+edited record, an uncommitted attachment, or a replaced original refuses instead.
+A replaced original rolls back with `recover --transaction`.
+
+Remove the attachment before `git worktree remove`. A forced removal descends
+through whatever `node_modules` points at; nmpool does not wrap that Git command.
+
+To move a package to a different generation, `unlink --execute` and then `link`
+with the new artifact. `shared-status` reports `request_mismatch` when the current
+inputs no longer key to the attached generation.
 
 ## Adopt, qualify, then replace explicitly
 

@@ -81,7 +81,9 @@ is within the configured depth and built-in exclusions: node_modules, .git,
 .claude, .codex, .next, dist, build, target, vendor, .venv, venv, coverage and
 .cache (case-insensitive). Packages under these excluded names are not inventoried;
 a complete report is not a whole-filesystem census. Its JSON separates
-candidate input groups from a reuse key (always null during census). Partial scans
+candidate input groups from a reuse key (always null during census), and records
+each worktree's branch and HEAD commit time from Git. `--stale` filters rows by
+that commit age only; session liveness is outside the tool. Partial scans
 exit 2. Unsupported install profiles are reported per row; missing worktree/read
 errors are never interpreted as zero references or permission to delete.
 

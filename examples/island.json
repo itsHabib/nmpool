@@ -17,7 +17,8 @@
     {"program": "npm", "args": ["run", "test:dependencies"], "env": {}}
   ],
   "runtime_commands": {
-    "check": {"program": "npm", "args": ["run", "test:dependencies"], "env": {"APP_CACHE_DIR": "{runtime}"}}
+    "check": {"program": "npm", "args": ["run", "test:dependencies"], "env": {"APP_CACHE_DIR": "{runtime}"}},
+    "format": {"program": "npm", "args": ["run", "format:check", "--", "--cache-location", "{runtime}/prettier"], "env": {}}
   },
   "selected_env": [],
   "credential_env": []

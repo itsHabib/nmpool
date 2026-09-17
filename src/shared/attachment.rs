@@ -1,3 +1,4 @@
+use super::transaction::{Plan, exists};
 use super::{Header, Store, read_bounded, validate_id, write_new};
 use crate::{
     island::Capture,
@@ -159,6 +160,50 @@ impl Store {
         Ok(record)
     }
 
+    /// Plan or remove this package's own committed first-time attachment.
+    ///
+    /// The package's record must equal the pool's prepared record for its
+    /// transaction byte for byte, so a copied or edited record can never name a
+    /// different package's link. Only that link and record are removed; the
+    /// package is left without `node_modules`. A replaced original refuses.
+    pub fn unlink(&self, package: &Path, execute: bool) -> Result<Plan> {
+        let (bytes, record) = self.own_record(package)?;
+        let transaction = self.root.join("transactions").join(&record.transaction_id);
+        if !self.transaction_committed(&record.transaction_id)? {
+            bail!("attachment_not_committed");
+        }
+        if read_bounded(&transaction.join("prepared.json"), 65536)? != bytes {
+            bail!("attachment_transaction_changed");
+        }
+        if exists(&transaction.join("plan.json"))? {
+            bail!("unlink_refuses_replacement: use recover --transaction");
+        }
+        self.recover(&record.transaction_id, execute)
+    }
+
+    /// Read the attachment record stored in `package` and check that it names
+    /// this same package. A missing recorded package is a mismatch, not a crash.
+    fn own_record(&self, package: &Path) -> Result<(Vec<u8>, Attachment)> {
+        let package = platform::absolute(package)?;
+        platform::plain_path(&package)?;
+        let package = dunce::canonicalize(package)?;
+        self.reject_package(&package)?;
+        let path = package.join(RECORD);
+        if !exists(&path)? {
+            bail!("attachment_absent");
+        }
+        let bytes = read_bounded(&path, 65536)?;
+        let record: Attachment = serde_json::from_slice(&bytes)?;
+        validate_id(&record.transaction_id)?;
+        if record.schema != "nmpool/attachment/v1" {
+            bail!("attachment_record_invalid");
+        }
+        if !same_package(&record.package, &package)? {
+            bail!("attachment_package_mismatch");
+        }
+        Ok((bytes, record))
+    }
+
     pub fn run_tool(self, capture: &Capture, tool: &str) -> Result<Attachment> {
         let record = self.attachment(&capture.package, false)?;
         if record.request_key != capture.request_key {
@@ -185,4 +230,12 @@ pub(super) fn match_request(capture: &Capture, header: &Header) -> Result<()> {
         bail!("request_mismatch");
     }
     Ok(())
+}
+
+fn same_package(recorded: &Path, package: &Path) -> Result<bool> {
+    match same_file::is_same_file(recorded, package) {
+        Ok(same) => Ok(same),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }

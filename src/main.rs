@@ -302,7 +302,7 @@ fn install(args: &Install, restore: bool) -> Result<u8> {
         return shared_prepare(args, profile);
     }
     if args.base.is_some() {
-        anyhow::bail!("base_requires_profile");
+        anyhow::bail!("base_requires_prepare_with_profile");
     }
     let started = std::time::Instant::now();
     let package = Package::read(&args.package)?;

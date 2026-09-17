@@ -18,7 +18,7 @@ use std::{
 
 const LIMIT: u64 = 32 * 1024 * 1024;
 const MARKER: &str = ".nmpool-island-stage.json";
-const CONTEXT_NAMES: [&str; 9] = [
+pub(crate) const CONTEXT_NAMES: [&str; 9] = [
     "package.json",
     ".npmrc",
     "pnpm-workspace.yaml",
@@ -451,6 +451,8 @@ pub(crate) fn read_policy(profile: &Path) -> Result<(Vec<u8>, Policy)> {
 pub(crate) fn captured_names(policy: &Policy) -> Vec<String> {
     let mut names = local_names(policy);
     names.extend(policy.context_inputs.iter().cloned());
+    names.sort();
+    names.dedup();
     names
 }
 

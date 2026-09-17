@@ -1,4 +1,5 @@
 //! Explicit, reviewed npm island inputs and commands. Staging is not a sandbox.
+pub mod base;
 mod provenance;
 mod recipe;
 pub use provenance::Provenance;
@@ -93,10 +94,7 @@ impl Capture {
         platform::plain_path(&profile)?;
         let package = dunce::canonicalize(package)?;
         let profile = dunce::canonicalize(profile)?;
-        let profile_bytes = required(&profile)?;
-        let policy: Policy = serde_json::from_slice(&profile_bytes)
-            .map_err(|error| anyhow::anyhow!("island_policy_invalid: {error}"))?;
-        validate_policy(&policy)?;
+        let (profile_bytes, policy) = read_policy(&profile)?;
         let files = capture_files(&package, &policy)?;
         validate_package(&files, &policy)?;
         let install_files = recipe::files(&files, &policy)?;
@@ -438,6 +436,22 @@ fn optional(path: &Path) -> Result<Option<Vec<u8>>> {
 
 fn required(path: &Path) -> Result<Vec<u8>> {
     optional(path)?.context("island_input_missing")
+}
+
+/// Read and validate a profile. Parse failures keep the parser's diagnostic.
+pub(crate) fn read_policy(profile: &Path) -> Result<(Vec<u8>, Policy)> {
+    let bytes = required(profile)?;
+    let policy: Policy = serde_json::from_slice(&bytes)
+        .map_err(|error| anyhow::anyhow!("island_policy_invalid: {error}"))?;
+    validate_policy(&policy)?;
+    Ok((bytes, policy))
+}
+
+/// Every package-relative path a capture reads: install inputs and declared context.
+pub(crate) fn captured_names(policy: &Policy) -> Vec<String> {
+    let mut names = local_names(policy);
+    names.extend(policy.context_inputs.iter().cloned());
+    names
 }
 
 fn local_names(policy: &Policy) -> Vec<String> {

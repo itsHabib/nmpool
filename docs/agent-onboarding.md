@@ -129,6 +129,7 @@ contract.
 | `src/assessment.rs` | Read-only package and ancestor assessment for sharing. |
 | `src/platform/protection.rs` | Disposable native consumer write-protection rehearsal. |
 | `src/island.rs` and `src/island/provenance.rs` | Shared policy, staged commands, registry admission and source provenance. |
+| `src/island/base.rs` | Private export of declared inputs at a Git revision for `prepare --base`. |
 | `src/shared/` and `src/shared.rs` | Shared generations, attachment, adoption, qualification and recovery. |
 | `src/platform/shared/` and `src/platform/shared.rs` | Native link, protection and identity-bound move operations. |
 | `tests/island.rs` and `tests/shared_native.rs` | Shared CLI, concurrency, provenance and native recovery regressions. |

@@ -1108,6 +1108,110 @@ fn checkout_context_stops_before_unrelated_outer_files() {
     second_capture.ensure_unchanged().unwrap();
 }
 
+#[test]
+fn prepare_base_exports_committed_inputs_and_keys_like_a_clean_worktree() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let repo = root.join("repo");
+    fs::create_dir(&repo).unwrap();
+    init_checkout(&repo);
+    let (package, profile) = fixture(&repo);
+    fs::write(repo.join(".gitignore"), "node_modules\n.nmpool*\n").unwrap();
+    git_commit(&repo, "base");
+    let committed = capture(&package, &profile).request_key;
+    // The working tree moves on; the base revision must not read it.
+    fs::write(package.join("schema.txt"), "schema-v2").unwrap();
+    assert_ne!(capture(&package, &profile).request_key, committed);
+    let cache = root.join("cache");
+    let base = [
+        "--package",
+        package.to_str().unwrap(),
+        "--cache",
+        cache.to_str().unwrap(),
+        "--profile",
+        profile.to_str().unwrap(),
+    ];
+    let report = island_cli("prepare", &base, &["--base", "HEAD"]);
+    assert_eq!(
+        report
+            .pointer("/header/request_key")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+        committed
+    );
+    let exported = report
+        .pointer("/base/exported")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert!(
+        exported.iter().any(|v| v == "package/schema.txt"),
+        "{exported:?}"
+    );
+    assert!(
+        exported.iter().all(|v| v != "package/.npmrc"),
+        "{exported:?}"
+    );
+    let artifact = report.get("artifact_id").unwrap().as_str().unwrap();
+    assert!(!package.join("node_modules").exists());
+    assert_eq!(fs::read(package.join("schema.txt")).unwrap(), b"schema-v2");
+    let dirty = cli_error(&[&["link"], &base[..], &["--artifact", artifact]].concat());
+    assert!(dirty.contains("request_mismatch"), "{dirty}");
+    fs::write(package.join("schema.txt"), "schema-v1").unwrap();
+    island_cli("link", &base, &["--artifact", artifact]);
+    assert_eq!(
+        fs::read(package.join("node_modules/generated/index.js")).unwrap(),
+        b"module.exports=\"schema-v1\""
+    );
+    assert_base_refusals(&package, &cache, &base);
+    remove_consumer_link(&package.join("node_modules"));
+    restore_fixture(&root);
+}
+
+fn assert_base_refusals(package: &Path, cache: &Path, base: &[&str]) {
+    let bad = cli_error(&[&["prepare"], base, &["--base", "no-such-revision"]].concat());
+    assert!(bad.contains("base_git_failed"), "{bad}");
+    let plain = cli_error(&[
+        "prepare",
+        "--package",
+        package.to_str().unwrap(),
+        "--cache",
+        cache.to_str().unwrap(),
+        "--base",
+        "HEAD",
+    ]);
+    assert!(plain.contains("base_requires_profile"), "{plain}");
+}
+
+fn git_commit(repo: &Path, message: &str) {
+    for args in [
+        vec!["add", "-A"],
+        vec![
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            message,
+        ],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(&args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+}
+
 fn init_checkout(root: &Path) {
     assert!(
         std::process::Command::new("git")

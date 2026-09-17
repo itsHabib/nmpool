@@ -172,6 +172,10 @@ struct SharedArgs {
 struct Install {
     #[arg(long)]
     profile: Option<PathBuf>,
+    /// Prepare from the package's inputs as committed at this Git revision,
+    /// exported privately; the working tree is not read. Requires --profile.
+    #[arg(long)]
+    base: Option<String>,
     #[arg(long)]
     package: PathBuf,
     #[arg(long)]
@@ -297,6 +301,9 @@ fn install(args: &Install, restore: bool) -> Result<u8> {
         }
         return shared_prepare(args, profile);
     }
+    if args.base.is_some() {
+        anyhow::bail!("base_requires_profile");
+    }
     let started = std::time::Instant::now();
     let package = Package::read(&args.package)?;
     let tools = Toolchain::discover(&args.runtime.node, args.runtime.npm_cli.as_deref())?;
@@ -416,19 +423,35 @@ fn shared_adopt(args: &SharedArgs) -> Result<u8> {
 }
 
 fn shared_prepare(args: &Install, profile: &std::path::Path) -> Result<u8> {
+    let mut export = None;
+    let mut source = args.package.clone();
+    let mut base = None;
+    if let Some(revision) = &args.base {
+        let directory = tempfile::Builder::new().prefix("nmpool-base-").tempdir()?;
+        let root = dunce::canonicalize(directory.path())?;
+        let (package, exported) =
+            nmpool::island::base::export(&args.package, profile, revision, &root)?;
+        source = package;
+        base = Some(exported);
+        export = Some(directory);
+    }
     let capture = nmpool::island::Capture::read(
-        &args.package,
+        &source,
         profile,
         &args.runtime.node,
         args.runtime.npm_cli.as_deref(),
     )?;
     let (artifact, header) = nmpool::shared::Store::open(&args.cache)?.prepare(&capture)?;
+    drop(export);
     let cleanup_warning = header.cleanup_warning.clone();
     println!(
         "{}",
-        serde_json::to_string_pretty(
-            &serde_json::json!({"artifact_id":artifact,"header":header,"cleanup_warning":cleanup_warning})
-        )?
+        serde_json::to_string_pretty(&serde_json::json!({
+            "artifact_id": artifact,
+            "header": header,
+            "cleanup_warning": cleanup_warning,
+            "base": base,
+        }))?
     );
     Ok(0)
 }

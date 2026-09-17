@@ -41,6 +41,17 @@ enum Commands {
         #[arg(long)]
         execute: bool,
     },
+    /// Remove only this package's own first-time attachment; preview by default.
+    Unlink {
+        #[arg(long)]
+        cache: PathBuf,
+        #[arg(long)]
+        package: PathBuf,
+        #[arg(long, conflicts_with = "execute")]
+        plan: bool,
+        #[arg(long)]
+        execute: bool,
+    },
     /// List retained install provenance; no garbage collection is performed.
     Retained {
         #[arg(long)]
@@ -89,6 +100,9 @@ enum Commands {
         max_depth: usize,
         #[arg(long)]
         json: bool,
+        /// Only report packages whose worktree HEAD commit is at least this many days old.
+        #[arg(long)]
+        stale: Option<u64>,
     },
     /// Build a fresh cache entry with npm ci --ignore-scripts in private staging.
     Prepare(Install),
@@ -182,25 +196,19 @@ fn run(cli: Cli) -> Result<u8> {
             transaction,
             plan: _,
             execute,
-        } => {
-            let plan = nmpool::shared::Store::open(&cache)?.recover(&transaction, execute)?;
-            println!("{}", serde_json::to_string_pretty(&plan)?);
-            Ok(0)
-        }
-        Commands::Retained { cache } => {
-            let plans = nmpool::shared::Store::open(&cache)?.retained()?;
-            println!("{}", serde_json::to_string_pretty(&plans)?);
-            Ok(0)
-        }
+        } => emit(&nmpool::shared::Store::open(&cache)?.recover(&transaction, execute)?),
+        Commands::Unlink {
+            cache,
+            package,
+            plan: _,
+            execute,
+        } => emit(&nmpool::shared::Store::open(&cache)?.unlink(&package, execute)?),
+        Commands::Retained { cache } => emit(&nmpool::shared::Store::open(&cache)?.retained()?),
         Commands::SharedInspect {
             cache,
             artifact,
             full,
-        } => {
-            let header = nmpool::shared::Store::open(&cache)?.read(&artifact, full)?;
-            println!("{}", serde_json::to_string_pretty(&header)?);
-            Ok(0)
-        }
+        } => emit(&nmpool::shared::Store::open(&cache)?.read(&artifact, full)?),
         Commands::SharedStatus { args, full } => shared_status(&args, full),
         Commands::Run { args, tool } => {
             reject_attachment_selectors(&args)?;
@@ -224,8 +232,9 @@ fn run(cli: Cli) -> Result<u8> {
             repo,
             max_depth,
             json,
+            stale,
         } => {
-            let report = census::run(&repo, max_depth)?;
+            let report = census::run(&repo, max_depth, stale)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             }
@@ -285,6 +294,11 @@ fn install(args: &Install, restore: bool) -> Result<u8> {
     Ok(0)
 }
 
+fn emit<T: serde::Serialize>(value: &T) -> Result<u8> {
+    println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(0)
+}
+
 const fn result_code(clean: bool) -> u8 {
     if clean {
         return 0;
@@ -296,9 +310,11 @@ fn print_census(report: &census::Census, json: bool) {
     if !json {
         for row in &report.rows {
             println!(
-                "{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\t{}",
                 row.install_state,
                 row.package.display(),
+                row.branch.as_deref().unwrap_or("detached"),
+                census::age_label(row.head_commit_unix),
                 row.unsupported_reason
                     .as_deref()
                     .unwrap_or("candidate; provenance unverified")

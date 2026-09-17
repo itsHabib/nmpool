@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `unlink` removes only a package's own first-time shared attachment, previewing
+  by default; copied records, changed links and replaced originals refuse.
+- `census` reports each worktree's branch and HEAD commit time; `--stale DAYS`
+  names packages whose worktree commit is at least that old.
 - Read-only `assess` reports sharing requirements together without executing npm.
 - `protection-probe` tests consumer write denial in a disposable native fixture;
   live sharing and adoption remain unimplemented.

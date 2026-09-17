@@ -447,6 +447,70 @@ fn public_cli_prepares_and_links_a_generated_artifact() {
     restore_fixture(&root);
 }
 
+#[test]
+fn public_cli_unlink_removes_only_its_own_attachment() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(temp.path()).unwrap();
+    let (package, profile) = fixture(&root);
+    let sibling_root = root.join("sibling");
+    fs::create_dir(&sibling_root).unwrap();
+    let (sibling, _) = fixture(&sibling_root);
+    let cache = root.join("cache");
+    let cache_text = cache.to_str().unwrap();
+    let package_text = package.to_str().unwrap();
+    let base = [
+        "--package",
+        package_text,
+        "--cache",
+        cache_text,
+        "--profile",
+        profile.to_str().unwrap(),
+    ];
+    let report = island_cli("prepare", &base, &[]);
+    let artifact = report.get("artifact_id").unwrap().as_str().unwrap();
+    island_cli("link", &base, &["--artifact", artifact]);
+    let unlink = ["unlink", "--cache", cache_text, "--package", package_text];
+    let plan = cli(&[&unlink[..], &["--plan"]].concat());
+    assert_eq!(plan.get("operation").unwrap(), &json!("remove-attachment"));
+    assert!(package.join("node_modules/generated/index.js").exists());
+    // A record copied from a sibling worktree must never remove the sibling's link.
+    fs::copy(
+        package.join(".nmpool-shared.json"),
+        sibling.join(".nmpool-shared.json"),
+    )
+    .unwrap();
+    let copied = cli_error(&[
+        "unlink",
+        "--cache",
+        cache_text,
+        "--package",
+        sibling.to_str().unwrap(),
+        "--execute",
+    ]);
+    assert!(copied.contains("attachment_package_mismatch"), "{copied}");
+    assert!(package.join("node_modules/generated/index.js").exists());
+    fs::remove_file(sibling.join(".nmpool-shared.json")).unwrap();
+    cli(&[&unlink[..], &["--execute"]].concat());
+    assert!(fs::symlink_metadata(package.join("node_modules")).is_err());
+    assert!(!package.join(".nmpool-shared.json").exists());
+    let again = cli_error(&unlink);
+    assert!(again.contains("attachment_absent"), "{again}");
+    // Relinking after unlink attaches the same generation again.
+    island_cli("link", &base, &["--artifact", artifact]);
+    assert!(package.join("node_modules/generated/index.js").exists());
+    remove_consumer_link(&package.join("node_modules"));
+    restore_fixture(&root);
+}
+
+fn cli_error(args: &[&str]) -> String {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_nmpool"))
+        .args(args)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
 fn cli(args: &[&str]) -> Value {
     cli_code(args, 0)
 }
@@ -558,6 +622,15 @@ fn public_cli_adopts_qualifies_replaces_and_recovers() {
     let replacement = island_cli("link", &base, &["--artifact", artifact, "--plan"]);
     let id = replacement.get("id").unwrap().as_str().unwrap();
     island_cli("link", &base, &["--plan-id", id]);
+    let refused = cli_error(&[
+        "unlink",
+        "--cache",
+        cache.to_str().unwrap(),
+        "--package",
+        package.to_str().unwrap(),
+        "--execute",
+    ]);
+    assert!(refused.contains("unlink_refuses_replacement"), "{refused}");
     let retained = cli(&["retained", "--cache", cache.to_str().unwrap()]);
     assert_eq!(retained.as_array().unwrap().len(), 1);
     let recovery = [

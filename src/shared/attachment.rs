@@ -1,3 +1,4 @@
+use super::transaction::{Plan, exists};
 use super::{Header, Store, read_bounded, validate_id, write_new};
 use crate::{
     island::Capture,
@@ -157,6 +158,35 @@ impl Store {
         native::verify_link(&link, &self.artifact(&record.artifact_id)?.join("tree"))?;
         record.last_full_audit = self.last_full_audit(&record.artifact_id)?;
         Ok(record)
+    }
+
+    /// Plan or remove this package's own committed first-time attachment.
+    ///
+    /// Only the exact recorded link and record are removed; the package is left
+    /// without `node_modules`. A record copied from another package, a replaced
+    /// original, or a changed link identity refuses instead of touching anything.
+    pub fn unlink(&self, package: &Path, execute: bool) -> Result<Plan> {
+        let package = platform::absolute(package)?;
+        platform::plain_path(&package)?;
+        let package = dunce::canonicalize(package)?;
+        self.reject_package(&package)?;
+        let path = package.join(RECORD);
+        if !exists(&path)? {
+            bail!("attachment_absent");
+        }
+        let record: Attachment = serde_json::from_slice(&read_bounded(&path, 65536)?)?;
+        validate_id(&record.transaction_id)?;
+        if record.schema != "nmpool/attachment/v1" {
+            bail!("attachment_record_invalid");
+        }
+        if !same_file::is_same_file(&record.package, &package)? {
+            bail!("attachment_package_mismatch");
+        }
+        let transaction = self.root.join("transactions").join(&record.transaction_id);
+        if exists(&transaction.join("plan.json"))? {
+            bail!("unlink_refuses_replacement: use recover --transaction");
+        }
+        self.recover(&record.transaction_id, execute)
     }
 
     pub fn run_tool(self, capture: &Capture, tool: &str) -> Result<Attachment> {

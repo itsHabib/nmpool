@@ -12,6 +12,8 @@ use std::{
 #[derive(Debug, Serialize)]
 pub struct Row {
     pub worktree: PathBuf,
+    pub branch: Option<String>,
+    pub head_commit_unix: Option<u64>,
     pub package: PathBuf,
     pub install_state: String,
     pub install_identity_group: Option<usize>,
@@ -28,19 +30,29 @@ pub struct Row {
 pub struct Census {
     pub schema: String,
     pub max_depth: usize,
+    pub stale_days: Option<u64>,
     pub complete_within_scope: bool,
     pub duplicate_worktree_enumerations: usize,
     pub rows: Vec<Row>,
     pub errors: Vec<String>,
 }
 
-pub fn run(roots: &[PathBuf], max_depth: usize) -> Result<Census> {
+/// A registered Git worktree with the HEAD identity Git reported for it.
+#[derive(Debug, Clone)]
+pub struct Worktree {
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    pub head_commit_unix: Option<u64>,
+}
+
+pub fn run(roots: &[PathBuf], max_depth: usize, stale_days: Option<u64>) -> Result<Census> {
     if max_depth > 8 {
         bail!("max_depth_exceeds_bound: 8");
     }
     let mut report = Census {
         schema: "nmpool/census/v1".into(),
         max_depth,
+        stale_days,
         complete_within_scope: true,
         duplicate_worktree_enumerations: 0,
         rows: Vec::new(),
@@ -69,11 +81,44 @@ pub fn run(roots: &[PathBuf], max_depth: usize) -> Result<Census> {
 
     report.complete_within_scope = report.errors.is_empty();
     report.rows.sort_by(|a, b| a.package.cmp(&b.package));
+    retain_stale(&mut report, stale_days)?;
     Ok(report)
 }
 
+/// Keep only rows whose worktree HEAD commit is at least `days` old. A worktree
+/// with no readable commit time is not called stale; it is kept and reported.
+fn retain_stale(report: &mut Census, days: Option<u64>) -> Result<()> {
+    if days.is_none() {
+        return Ok(());
+    }
+    let limit = days
+        .unwrap_or(0)
+        .checked_mul(86_400)
+        .context("stale_days_overflow")?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .context("clock_before_epoch")?
+        .as_secs();
+    report.rows.retain(|row| {
+        row.head_commit_unix
+            .is_none_or(|time| now.saturating_sub(time) >= limit)
+    });
+    Ok(())
+}
+
+/// Human label for a HEAD commit age in whole days, for the text report.
+pub fn age_label(head_commit_unix: Option<u64>) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    head_commit_unix.map_or_else(
+        || "age-unknown".into(),
+        |time| format!("{}d", now.saturating_sub(time) / 86_400),
+    )
+}
+
 fn scan_trees(
-    trees: &[PathBuf],
+    trees: &[Worktree],
     depth: usize,
     seen_trees: &mut HashSet<Handle>,
     seen_packages: &mut HashSet<Handle>,
@@ -82,26 +127,38 @@ fn scan_trees(
 ) {
     for tree in trees {
         if let Err(e) = scan_tree(tree, depth, seen_trees, seen_packages, installs, report) {
-            report.errors.push(format!("{}: {e:#}", tree.display()));
+            report
+                .errors
+                .push(format!("{}: {e:#}", tree.path.display()));
         }
     }
 }
 
 fn scan_tree(
-    tree: &Path,
+    tree: &Worktree,
     depth: usize,
     seen_trees: &mut HashSet<Handle>,
     seen_packages: &mut HashSet<Handle>,
     installs: &mut Vec<Handle>,
     report: &mut Census,
 ) -> Result<()> {
-    let identity = Handle::from_path(tree).context("missing_or_unreadable_worktree")?;
+    let identity = Handle::from_path(&tree.path).context("missing_or_unreadable_worktree")?;
     if !seen_trees.insert(identity) {
         report.duplicate_worktree_enumerations += 1;
         return Ok(());
     }
-    let tree = dunce::canonicalize(tree)?;
-    scan_dir(&tree, &tree, depth, seen_packages, installs, report)
+    let tree = Worktree {
+        path: dunce::canonicalize(&tree.path)?,
+        ..tree.clone()
+    };
+    scan_dir(
+        &tree,
+        &tree.path.clone(),
+        depth,
+        seen_packages,
+        installs,
+        report,
+    )
 }
 
 #[allow(
@@ -110,7 +167,7 @@ fn scan_tree(
     reason = "Operator requires no else syntax, including let-else"
 )]
 fn scan_dir(
-    tree: &Path,
+    tree: &Worktree,
     path: &Path,
     depth: usize,
     seen: &mut HashSet<Handle>,
@@ -183,12 +240,14 @@ fn hash_input(path: &Path) -> Result<Option<String>> {
     }
 }
 
-fn make_row(tree: &Path, path: &Path, installs: &mut Vec<Handle>) -> Result<Row> {
+fn make_row(tree: &Worktree, path: &Path, installs: &mut Vec<Handle>) -> Result<Row> {
     // An unreadable config is a partial scan, not an unsupported/absent input.
     hash_input(&path.join(".npmrc"))?;
     let nm = path.join("node_modules");
     let mut row = Row {
-        worktree: tree.into(),
+        worktree: tree.path.clone(),
+        branch: tree.branch.clone(),
+        head_commit_unix: tree.head_commit_unix,
         package: path.into(),
         install_state: "absent".into(),
         install_identity_group: None,
@@ -258,7 +317,7 @@ fn add_install(installs: &mut Vec<Handle>, handle: Handle) -> usize {
     installs.len() - 1
 }
 
-fn worktrees(root: &Path) -> Result<Vec<PathBuf>> {
+fn worktrees(root: &Path) -> Result<Vec<Worktree>> {
     let output = Command::new("git")
         .arg("-C")
         .arg(root)
@@ -267,12 +326,75 @@ fn worktrees(root: &Path) -> Result<Vec<PathBuf>> {
     if !output.status.success() {
         bail!("git_worktree_list_failed");
     }
-    output
-        .stdout
-        .split(|b| *b == 0)
-        .filter_map(|part| part.strip_prefix(b"worktree "))
-        .map(path_from_git)
+    let mut trees: Vec<Entry> = Vec::new();
+    for part in output.stdout.split(|b| *b == 0) {
+        porcelain_field(&mut trees, part)?;
+    }
+    trees
+        .into_iter()
+        .map(|entry| {
+            Ok(Worktree {
+                path: entry.path,
+                branch: entry.branch,
+                head_commit_unix: entry.head.map(|sha| commit_time(root, &sha)).transpose()?,
+            })
+        })
         .collect()
+}
+
+/// One porcelain worktree block while it is being parsed.
+struct Entry {
+    path: PathBuf,
+    branch: Option<String>,
+    head: Option<Vec<u8>>,
+}
+
+/// Apply one NUL-terminated porcelain field. `worktree` opens an entry; `HEAD`
+/// and `branch` fill the current one. Other fields and blank terminators are ignored.
+fn porcelain_field(trees: &mut Vec<Entry>, part: &[u8]) -> Result<()> {
+    if let Some(path) = part.strip_prefix(b"worktree ") {
+        trees.push(Entry {
+            path: path_from_git(path)?,
+            branch: None,
+            head: None,
+        });
+        return Ok(());
+    }
+    if trees.is_empty() {
+        return Ok(());
+    }
+    let current = trees.last_mut().context("porcelain_entry")?;
+    // An unborn branch reports an all-zero HEAD: no commit, not an error.
+    if let Some(head) = part.strip_prefix(b"HEAD ") {
+        current.head = Some(head.to_vec()).filter(|sha| sha.iter().any(|b| *b != b'0'));
+    }
+    if let Some(branch) = part.strip_prefix(b"branch ") {
+        let name = std::str::from_utf8(branch).context("git_branch_encoding")?;
+        current.branch = Some(name.strip_prefix("refs/heads/").unwrap_or(name).into());
+    }
+    Ok(())
+}
+
+/// Committer time of one commit, read from the repository that registers the
+/// worktree so a missing checkout still resolves. Git output is data, not a path.
+fn commit_time(root: &Path, sha: &[u8]) -> Result<u64> {
+    let sha = std::str::from_utf8(sha).context("git_head_encoding")?;
+    if sha.len() > 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("git_head_invalid");
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["show", "-s", "--format=%ct", sha])
+        .output()?;
+    if !output.status.success() {
+        bail!("git_commit_time_failed");
+    }
+    String::from_utf8(output.stdout)
+        .context("git_commit_time_encoding")?
+        .trim()
+        .parse()
+        .context("git_commit_time_invalid")
 }
 
 #[cfg_attr(

@@ -109,11 +109,12 @@ nmpool unlink --package /other-worktree/web --cache /pool --execute
 git worktree remove /other-worktree
 ```
 
-`unlink` reads the package's own attachment record, checks that the record names
-this package and that the link still has the recorded identity, then removes only
-that link and record. It leaves the package without `node_modules`; a hand-made
-link, a record copied from a sibling worktree, or a replaced original refuses
-instead. A replaced original rolls back with `recover --transaction`.
+`unlink` reads the package's own attachment record and requires it to name this
+package and to equal the pool's prepared record for its committed transaction.
+It then removes only that link (when it still has the recorded identity) and the
+record, leaving the package without `node_modules`. A hand-made link, a copied or
+edited record, an uncommitted attachment, or a replaced original refuses instead.
+A replaced original rolls back with `recover --transaction`.
 
 Remove the attachment before `git worktree remove`. A forced removal descends
 through whatever `node_modules` points at; nmpool does not wrap that Git command.

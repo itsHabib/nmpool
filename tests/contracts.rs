@@ -890,12 +890,68 @@ fn status_reports_busy_before_absent_or_untracked() {
 }
 
 #[test]
+fn census_keeps_other_worktrees_when_one_head_commit_is_unreadable() {
+    let (_temp, root) = scratch();
+    let repo = root.join("repo");
+    package(&repo);
+    git(&repo, &["init"]);
+    git(&repo, &["add", "package.json", "package-lock.json"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-m",
+            "fixture",
+        ],
+    );
+    let linked = root.join("linked");
+    git(
+        &repo,
+        &["worktree", "add", "--detach", linked.to_str().unwrap()],
+    );
+    fs::write(
+        repo.join(".git/worktrees/linked/HEAD"),
+        "0123456789abcdef0123456789abcdef01234567\n",
+    )
+    .unwrap();
+    let report = census::run(std::slice::from_ref(&repo), 2, None).unwrap();
+    assert!(!report.complete_within_scope);
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.contains("git_commit_time_failed")),
+        "{:?}",
+        report.errors
+    );
+    assert_eq!(report.rows.len(), 2, "{:?}", report.rows);
+    assert_eq!(
+        report
+            .rows
+            .iter()
+            .filter(|row| row.head_commit_unix.is_some())
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn census_skips_case_variant_dependency_trees_and_records_missing_lock() {
     let (_temp, root) = scratch();
     package(&root);
     git(&root, &["init"]);
     package(&root.join("Node_Modules/dependency"));
     fs::remove_file(root.join("package-lock.json")).unwrap();
+    let unborn = census::run(std::slice::from_ref(&root), 4, Some(1)).unwrap();
+    assert_eq!(
+        unborn.rows.len(),
+        1,
+        "unknown commit time is kept under --stale"
+    );
     let report = census::run(&[root], 4, None).unwrap();
     assert!(report.rows.iter().all(|row| row.head_commit_unix.is_none()));
     assert!(report.complete_within_scope, "{:?}", report.errors);

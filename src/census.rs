@@ -40,8 +40,10 @@ pub struct Census {
 /// A registered Git worktree with the HEAD identity Git reported for it.
 #[derive(Debug, Clone)]
 pub struct Worktree {
+    pub repo: PathBuf,
     pub path: PathBuf,
     pub branch: Option<String>,
+    pub head: Option<String>,
     pub head_commit_unix: Option<u64>,
 }
 
@@ -149,6 +151,7 @@ fn scan_tree(
     }
     let tree = Worktree {
         path: dunce::canonicalize(&tree.path)?,
+        head_commit_unix: head_commit_time(tree, report),
         ..tree.clone()
     };
     scan_dir(
@@ -159,6 +162,21 @@ fn scan_tree(
         installs,
         report,
     )
+}
+
+/// One worktree's unreadable commit time is a partial-scan error for that
+/// worktree only; its packages are still inventoried with no commit time.
+fn head_commit_time(tree: &Worktree, report: &mut Census) -> Option<u64> {
+    let sha = tree.head.as_deref()?;
+    match commit_time(&tree.repo, sha) {
+        Ok(time) => Some(time),
+        Err(e) => {
+            report
+                .errors
+                .push(format!("{}: {e:#}", tree.path.display()));
+            None
+        }
+    }
 }
 
 #[allow(
@@ -334,12 +352,23 @@ fn worktrees(root: &Path) -> Result<Vec<Worktree>> {
         .into_iter()
         .map(|entry| {
             Ok(Worktree {
+                repo: root.into(),
                 path: entry.path,
                 branch: entry.branch,
-                head_commit_unix: entry.head.map(|sha| commit_time(root, &sha)).transpose()?,
+                head: entry.head.as_deref().map(head_sha).transpose()?,
+                head_commit_unix: None,
             })
         })
         .collect()
+}
+
+/// Git's HEAD field is data: accept only a hex object name.
+fn head_sha(bytes: &[u8]) -> Result<String> {
+    let sha = std::str::from_utf8(bytes).context("git_head_encoding")?;
+    if sha.is_empty() || sha.len() > 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("git_head_invalid");
+    }
+    Ok(sha.into())
 }
 
 /// One porcelain worktree block while it is being parsed.
@@ -377,15 +406,11 @@ fn porcelain_field(trees: &mut Vec<Entry>, part: &[u8]) -> Result<()> {
 
 /// Committer time of one commit, read from the repository that registers the
 /// worktree so a missing checkout still resolves. Git output is data, not a path.
-fn commit_time(root: &Path, sha: &[u8]) -> Result<u64> {
-    let sha = std::str::from_utf8(sha).context("git_head_encoding")?;
-    if sha.len() > 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
-        bail!("git_head_invalid");
-    }
+fn commit_time(root: &Path, sha: &str) -> Result<u64> {
     let output = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["show", "-s", "--format=%ct", sha])
+        .args(["show", "-s", "--format=%ct", sha, "--"])
         .output()?;
     if !output.status.success() {
         bail!("git_commit_time_failed");

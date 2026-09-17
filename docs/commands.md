@@ -100,7 +100,8 @@ worktrees are deduplicated. Default package depth is two; `--max-depth` permits 
 eight. JSON includes incomplete-scan errors, candidate input groups, link states,
 and each worktree's branch and HEAD commit time as Git reports them. `--stale DAYS`
 keeps only packages whose worktree HEAD commit is at least that old; an unborn
-branch has no commit time and is kept. It names candidates for a separate cleanup
+branch or an unreadable commit has no commit time and is kept, and an unreadable
+commit is reported as a partial-scan error for that worktree only. It names candidates for a separate cleanup
 and never removes a worktree. Exit 0 means complete within scope, 2 partial census,
 1 failure.
 

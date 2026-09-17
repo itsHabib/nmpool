@@ -502,11 +502,18 @@ fn assert_foreign_records_refuse_unlink(package: &Path, sibling: &Path, cache_te
     fs::copy(&record, sibling.join(".nmpool-shared.json")).unwrap();
     let copied = cli_error(&unlink);
     assert!(copied.contains("attachment_package_mismatch"), "{copied}");
-    let forged = fs::read_to_string(&record).unwrap().replace(
-        &serde_json::to_string(package).unwrap(),
-        &serde_json::to_string(sibling).unwrap(),
+    // Rewrite the package field the way the tool records paths (dunce form),
+    // which differs from std canonicalization on Windows.
+    let mut forged: Value = serde_json::from_slice(&fs::read(&record).unwrap()).unwrap();
+    forged.as_object_mut().unwrap().insert(
+        "package".into(),
+        json!(dunce::canonicalize(sibling).unwrap()),
     );
-    fs::write(sibling.join(".nmpool-shared.json"), forged).unwrap();
+    fs::write(
+        sibling.join(".nmpool-shared.json"),
+        serde_json::to_vec(&forged).unwrap(),
+    )
+    .unwrap();
     let edited = cli_error(&unlink);
     assert!(
         edited.contains("attachment_transaction_changed"),

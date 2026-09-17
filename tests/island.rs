@@ -1188,11 +1188,12 @@ fn assert_base_matches_fresh_clone(root: &Path, repo: &Path, profile: &Path, bas
     )
     .unwrap();
     git_commit(repo, "crlf attribute");
-    let clone = root.join("clone");
+    // Git refuses a verbatim `\\?\` work tree path on Windows; hand it plain paths.
+    let clone = dunce::simplified(root).join("clone");
     assert!(
         std::process::Command::new("git")
             .args(["clone", "--quiet"])
-            .arg(repo)
+            .arg(dunce::simplified(repo))
             .arg(&clone)
             .status()
             .unwrap()

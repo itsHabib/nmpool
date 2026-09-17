@@ -1118,6 +1118,10 @@ fn prepare_base_exports_committed_inputs_and_keys_like_a_clean_worktree() {
     let (package, profile) = fixture(&repo);
     fs::write(repo.join(".gitignore"), "node_modules\n.nmpool*\n").unwrap();
     git_commit(&repo, "base");
+    // Make the working tree a real checkout: hand-written files never passed
+    // through Git's filters (autocrlf on Windows), a checkout does.
+    fs::remove_dir_all(&package).unwrap();
+    git_run(&repo, &["checkout", "--", "."]);
     let committed = capture(&package, &profile).request_key;
     // The working tree moves on; the base revision must not read it.
     fs::write(package.join("schema.txt"), "schema-v2").unwrap();
@@ -1258,9 +1262,10 @@ fn assert_base_refusals(package: &Path, cache: &Path, base: &[&str]) {
 }
 
 fn git_commit(repo: &Path, message: &str) {
-    for args in [
-        vec!["add", "-A"],
-        vec![
+    git_run(repo, &["add", "-A"]);
+    git_run(
+        repo,
+        &[
             "-c",
             "user.name=Fixture",
             "-c",
@@ -1272,17 +1277,20 @@ fn git_commit(repo: &Path, message: &str) {
             "-m",
             message,
         ],
-    ] {
-        assert!(
-            std::process::Command::new("git")
-                .arg("-C")
-                .arg(repo)
-                .args(&args)
-                .status()
-                .unwrap()
-                .success()
-        );
-    }
+    );
+}
+
+fn git_run(repo: &Path, args: &[&str]) {
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .status()
+            .unwrap()
+            .success(),
+        "git {args:?}"
+    );
 }
 
 fn init_checkout(root: &Path) {

@@ -91,6 +91,17 @@ cannot redirect writes outside `node_modules` is incompatible with this strategy
 `run` and `shared-status` use the current attachment; they reject `--artifact`
 rather than treating it as an identity guard.
 
+Tools that write a cache under `node_modules` (prettier, eslint, babel-loader)
+fail against the protected tree. Point them at `{runtime}` instead; the example
+profile's `format` command passes `--cache-location {runtime}/prettier`.
+
+There is no in-place repair of a generation. When a tree is found empty, altered
+or quarantined, `prepare --profile` from any worktree whose inputs key to it
+publishes a fresh generation; the damaged one stays for inspection. Every
+pool-changing step is a transaction directory under `shared-v1/transactions/<id>`
+with `prepared.json`, `committed` and `recovered` markers, which is the record of
+what touched a generation and when.
+
 Pool-changing operations are serialized. `run` waits for the current pool operation
 (including a long prepare or full audit) at startup and its final check; cancel it
 with Ctrl-C if you do not want to wait. The pool lock is released while the tool runs.

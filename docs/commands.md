@@ -37,6 +37,14 @@ paths (`C:\repo\package`) or ordinary relative paths (`.\package`). These argume
 refuse drive-relative forms such as `C:package`, whose meaning depends on hidden
 per-drive working-directory state.
 
+## Identify the binary
+
+`nmpool --version` prints the crate version and every record schema this build
+reads or writes. A programmatic caller should run it once and check for the
+`attachment record:` line before trusting output; a different program that also
+answers to `nmpool` on PATH will not print it. Invoke the binary by its full path
+when several are installed; nmpool does not read an environment override.
+
 ## Daily use
 
 ```sh

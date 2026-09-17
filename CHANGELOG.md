@@ -11,6 +11,8 @@ All notable changes to this project are documented here. The format follows
   by default; copied records, changed links and replaced originals refuse.
 - `census` reports each worktree's branch and HEAD commit time; `--stale DAYS`
   names packages whose worktree commit is at least that old.
+- `--version` lists every record schema the binary reads or writes so a
+  programmatic caller can assert which `nmpool` it resolved.
 - Read-only `assess` reports sharing requirements together without executing npm.
 - `protection-probe` tests consumer write denial in a disposable native fixture;
   live sharing and adoption remain unimplemented.

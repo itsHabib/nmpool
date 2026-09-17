@@ -12,9 +12,22 @@ use nmpool::{
 };
 use std::{path::PathBuf, process::ExitCode};
 
+/// Identity a caller can assert before trusting output: the crate version and
+/// every schema this binary reads or writes. Another program answering to the
+/// same name on PATH will not print these lines.
+const LONG_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    "\nprivate-copy inputs: nmpool/npm-no-scripts/v2",
+    "\nrestoration record: nmpool/restoration/v1",
+    "\nsharing inputs: nmpool/island-inputs/v2",
+    "\nattachment record: nmpool/attachment/v1",
+    "\ncensus: nmpool/census/v1"
+);
+
 #[derive(Parser)]
 #[command(
     version,
+    long_version = LONG_VERSION,
     about = "Reuse npm installs with private copies or explicit shared generations."
 )]
 struct Cli {
